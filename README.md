@@ -8,6 +8,7 @@
 
 ## 文档
 
+- [实施方案](docs/实施方案.md)（总体思路、技术栈、里程碑与分工）
 - [系统设计说明书](docs/系统设计说明书.md)（架构图源码为 Mermaid，导出的 SVG/PNG 在 [docs/diagrams](docs/diagrams/)）
 - 通信协议文档（待写）
 - 测试验证报告（待写）
