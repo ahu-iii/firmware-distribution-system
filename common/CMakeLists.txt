@@ -5,6 +5,10 @@ add_library(fwds_common STATIC
   protocol.cpp
   frame_codec.h
   frame_codec.cpp
+  manifest.h
+  manifest.cpp
+  firmware_package.h
+  firmware_package.cpp
   config.h
   config.cpp
   log.h
@@ -16,6 +20,10 @@ add_library(fwds_common STATIC
   crypto/rand.cpp
   crypto/aead_gcm.h
   crypto/aead_gcm.cpp
+  crypto/sha256.h
+  crypto/sha256.cpp
+  crypto/rsa_pss.h
+  crypto/rsa_pss.cpp
   crypto/kdf.h
   crypto/kdf.cpp
   crypto/key_file.h
@@ -28,6 +36,8 @@ add_library(fwds_common STATIC
   net/frame_channel.cpp
   security/cert_verifier.h
   security/cert_verifier.cpp
+  security/manifest_verifier.h
+  security/manifest_verifier.cpp
   security/key_store.h
   security/key_store.cpp
   security/tls_channel.h

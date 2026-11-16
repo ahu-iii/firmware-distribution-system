@@ -1,7 +1,10 @@
-# 客户端网络层编成库，主程序和单元测试都链接它
+# 客户端网络层、安全层编成库，主程序和单元测试都链接它
 add_library(fwds_client_lib STATIC
   net/tcp_client.h
   net/tcp_client.cpp
+  security/anti_rollback.h
+  security/update_validator.h
+  security/update_validator.cpp
 )
 target_link_libraries(fwds_client_lib PUBLIC fwds_common)
 

@@ -76,15 +76,19 @@ EvpPkeyPtr generateEcP256Key() {
 }
 
 bool isValidCertName(CertType type, const QString& name) {
+  // 正则用 \A … \z 表示“整个字符串从头到尾”。不用 ^ … $：$ 在字符串末尾的换行符之前
+  // 也能匹配，"DEV-001\n" 会被当成合法名称写进证书。
   if (type == CertType::Device) {
-    static const QRegularExpression deviceId(QStringLiteral("^[A-Za-z0-9_-]{1,64}$"));
+    static const QRegularExpression deviceId(QStringLiteral("\\A[A-Za-z0-9_-]{1,64}\\z"));
     return deviceId.match(name).hasMatch();
   }
+  // QHostAddress 解析时会自动去掉首尾空白，所以带首尾空白或换行的写法要先挡住
+  if (name != name.trimmed()) return false;
   QHostAddress address;
   if (address.setAddress(name)) return true;
   static const QRegularExpression host(
-      QStringLiteral("^(?=.{1,253}$)[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?"
-                     "(\\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*$"));
+      QStringLiteral("\\A(?=.{1,253}\\z)[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?"
+                     "(\\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*\\z"));
   return host.match(name).hasMatch();
 }
 

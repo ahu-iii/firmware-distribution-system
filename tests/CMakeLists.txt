@@ -27,6 +27,12 @@ add_executable(fwds-tests
   test_admin_service.cpp
   test_login_throttle.cpp
   test_device_login.cpp
+  test_fsk.h
+  test_rsa_pss.cpp
+  test_manifest.cpp
+  test_manifest_verifier.cpp
+  test_firmware_package.cpp
+  test_update_validator.cpp
 )
 target_link_libraries(fwds-tests PRIVATE fwds_server_lib fwds_client_lib fwds_signer_lib GTest::gtest)
 

@@ -61,6 +61,7 @@ enum class ErrorCode : int {
   DiskFull = 3011,
   Cancelled = 3012,
   Busy = 3013,
+  ManifestInvalid = 3014,
 };
 
 // 一帧：帧头里上层关心的字段加消息体。

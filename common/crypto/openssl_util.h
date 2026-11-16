@@ -17,6 +17,7 @@ struct OsslDeleter {
   void operator()(EVP_PKEY* p) const { EVP_PKEY_free(p); }
   void operator()(EVP_PKEY_CTX* p) const { EVP_PKEY_CTX_free(p); }
   void operator()(EVP_CIPHER_CTX* p) const { EVP_CIPHER_CTX_free(p); }
+  void operator()(EVP_MD_CTX* p) const { EVP_MD_CTX_free(p); }
   void operator()(X509* p) const { X509_free(p); }
   void operator()(X509_CRL* p) const { X509_CRL_free(p); }
   void operator()(X509_REVOKED* p) const { X509_REVOKED_free(p); }
