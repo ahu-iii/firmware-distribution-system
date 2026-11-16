@@ -1,0 +1,24 @@
+# 优先用系统安装的 GoogleTest，没有就在线拉取
+find_package(GTest QUIET)
+if(NOT GTest_FOUND)
+  include(FetchContent)
+  FetchContent_Declare(googletest
+    URL https://github.com/google/googletest/archive/refs/tags/v1.14.0.zip)
+  set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+  FetchContent_MakeAvailable(googletest)
+endif()
+
+add_executable(fwds-tests
+  main.cpp
+  test_util.h
+  test_frame_codec.cpp
+  test_backoff.cpp
+  test_config.cpp
+  test_conn_limiter.cpp
+  test_network.cpp
+)
+target_link_libraries(fwds-tests PRIVATE fwds_server_lib fwds_client_lib GTest::gtest)
+
+include(GoogleTest)
+gtest_discover_tests(fwds-tests)
+target_compile_definitions(fwds-tests PRIVATE FWDS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
