@@ -55,6 +55,7 @@ const char* errorName(ErrorCode code) {
     case ErrorCode::DiskFull: return "DISK_FULL";
     case ErrorCode::Cancelled: return "CANCELLED";
     case ErrorCode::Busy: return "BUSY";
+    case ErrorCode::ManifestInvalid: return "MANIFEST_INVALID";
   }
   return "UNKNOWN";
 }

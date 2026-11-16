@@ -1,17 +1,22 @@
 // fwds-signer：离线签发工具（命令行），只在签发主机上运行。
-// 证书相关的子命令（ca-init、issue-cert、revoke、update-crl、list-certs）已实现；
-// 固件相关的（sign-fw、sign-exe、issue-lic）属于开发 2。
+// 证书相关的子命令（ca-init、issue-cert、revoke、update-crl、list-certs）和
+// 固件签名相关的（fsk-init、sign-fw、verify-fw）已实现；sign-exe、issue-lic 待实现。
 //
 // 口令：CA 口令每次在终端输入（不回显）；没有终端时从环境变量 FWDS_CA_PASSPHRASE 读取。
-// 新签发的服务端 / 设备私钥的口令同理，环境变量是 FWDS_KEY_PASSPHRASE。
+// 新签发的服务端 / 设备私钥的口令同理，环境变量是 FWDS_KEY_PASSPHRASE；
+// 固件签名密钥 FSK 的口令对应 FWDS_FSK_PASSPHRASE。
 #include <QCommandLineParser>
 #include <QCoreApplication>
+#include <QFile>
 #include <QTextStream>
 #include <memory>
 
 #include "common/config.h"
+#include "common/firmware_package.h"
 #include "common/security/key_store.h"
 #include "signer/ca_store.h"
+#include "signer/firmware_packer.h"
+#include "signer/fsk_store.h"
 #include "signer/passphrase_prompt.h"
 
 namespace {
@@ -31,7 +36,9 @@ const Command kCommands[] = {
     {"revoke", "吊销证书并更新 CRL"},
     {"update-crl", "重新生成 CRL（吊销名单不变，刷新有效期）"},
     {"list-certs", "列出已签发的证书"},
+    {"fsk-init", "生成固件签名密钥 FSK（RSA-3072）"},
     {"sign-fw", "对固件镜像生成 manifest、签名并打包为 .fwpkg"},
+    {"verify-fw", "用 FSK 公钥完整检查一个 .fwpkg"},
     {"sign-exe", "给客户端程序签名"},
     {"issue-lic", "签发设备许可证 device.lic"},
 };
@@ -263,6 +270,152 @@ int cmdListCerts(const QStringList& args) {
   return 0;
 }
 
+// 打印 manifest 的主要字段。哈希只显示前 8 位，够人工核对用。
+void printManifest(const fwds::Manifest& m) {
+  out() << "  包 ID：     " << m.pkgId << "\n  适用型号：  " << m.deviceModel << "\n  版本：      "
+        << m.version << "\n  安全版本号：" << m.securityVersion << "\n  镜像大小：  " << m.imageSize
+        << " 字节，" << m.chunkCount << " 片\n  镜像哈希：  "
+        << QString::fromLatin1(m.imageSha256.toHex().left(8)) << "…\n  签发时间：  " << m.buildTime
+        << "\n";
+}
+
+// 读入 FSK 公钥文件并装进验签器。
+bool loadVerifier(const QString& publicKeyPath, fwds::ManifestVerifier* verifier) {
+  QFile file(publicKeyPath);
+  QString error;
+  if (!file.open(QIODevice::ReadOnly)) {
+    fail(QStringLiteral("无法读取公钥 %1").arg(publicKeyPath));
+    return false;
+  }
+  if (!verifier->loadPublicKey(file.readAll(), &error)) {
+    fail(error);
+    return false;
+  }
+  return true;
+}
+
+int cmdFskInit(const QStringList& args) {
+  QCommandLineParser parser;
+  parser.setApplicationDescription(
+      QStringLiteral("生成固件签名密钥：fsk.key（加密的 RSA-3072 私钥）、fsk.pub.pem（公钥）"));
+  const QCommandLineOption dirOpt(QStringLiteral("fsk-dir"), QStringLiteral("FSK 目录（必填）"),
+                                  QStringLiteral("dir"));
+  parser.addHelpOption();
+  parser.addOption(dirOpt);
+  parser.process(args);
+  if (!parser.isSet(dirOpt)) return fail(QStringLiteral("缺少 --fsk-dir"));
+
+  SecureBuffer passphrase;
+  QString error;
+  if (!fwds::obtainPassphrase(fwds::kFskPassphraseEnv,
+                              QStringLiteral("设置 FSK 口令（至少 12 个字符）："), true, &passphrase,
+                              &error)) {
+    return fail(error);
+  }
+  out() << "正在生成 RSA-3072 密钥，需要几秒……\n";
+  out().flush();
+  fwds::FskStore store(parser.value(dirOpt));
+  QString fingerprint;
+  if (!store.init(passphrase, &fingerprint, &error)) return fail(error);
+
+  out() << "固件签名密钥已生成。\n  公钥：" << store.publicKeyPath() << "\n  公钥指纹（SHA-256）："
+        << fingerprint << "\n请把 FSK 目录留在签发主机上，不要放进仓库；公钥文件分发给服务端和设备。\n";
+  return 0;
+}
+
+int cmdSignFw(const QStringList& args) {
+  QCommandLineParser parser;
+  parser.setApplicationDescription(
+      QStringLiteral("读固件镜像，生成 manifest（版本、整镜像哈希、分片哈希），用 FSK 签名，打包成 .fwpkg"));
+  const QCommandLineOption dirOpt(QStringLiteral("fsk-dir"), QStringLiteral("FSK 目录（必填）"),
+                                  QStringLiteral("dir"));
+  const QCommandLineOption imageOpt(QStringLiteral("image"), QStringLiteral("固件镜像文件（必填）"),
+                                    QStringLiteral("file"));
+  const QCommandLineOption modelOpt(QStringLiteral("model"), QStringLiteral("适用的设备型号（必填）"),
+                                    QStringLiteral("model"));
+  const QCommandLineOption versionOpt(QStringLiteral("fw-version"),
+                                      QStringLiteral("固件版本号 主.次.修订（必填）"),
+                                      QStringLiteral("x.y.z"));
+  const QCommandLineOption svOpt(QStringLiteral("security-version"),
+                                 QStringLiteral("安全版本号，正整数，只增不减（必填）"),
+                                 QStringLiteral("n"));
+  const QCommandLineOption noteOpt(QStringLiteral("note"), QStringLiteral("发布说明"),
+                                   QStringLiteral("text"));
+  const QCommandLineOption outOpt(QStringLiteral("out"), QStringLiteral("输出的 .fwpkg 文件（必填）"),
+                                  QStringLiteral("file"));
+  parser.addHelpOption();
+  for (const QCommandLineOption& option : {dirOpt, imageOpt, modelOpt, versionOpt, svOpt, noteOpt, outOpt}) {
+    parser.addOption(option);
+  }
+  parser.process(args);
+  for (const QCommandLineOption& option : {dirOpt, imageOpt, modelOpt, versionOpt, svOpt, outOpt}) {
+    if (!parser.isSet(option)) return fail(QStringLiteral("缺少 --%1").arg(option.names().first()));
+  }
+
+  fwds::FirmwareInfo info;
+  info.deviceModel = parser.value(modelOpt);
+  info.version = parser.value(versionOpt);
+  info.releaseNote = parser.value(noteOpt);
+  bool ok = false;
+  info.securityVersion = parser.value(svOpt).toInt(&ok);
+  if (!ok || info.securityVersion < 1) return fail(QStringLiteral("--security-version 必须是正整数"));
+
+  // 公钥先装好：签完之后用它把成品完整检查一遍
+  const fwds::FskStore store(parser.value(dirOpt));
+  fwds::ManifestVerifier verifier;
+  if (!loadVerifier(store.publicKeyPath(), &verifier)) return 1;
+
+  SecureBuffer passphrase;
+  QString error;
+  if (!fwds::obtainPassphrase(fwds::kFskPassphraseEnv, QStringLiteral("FSK 口令："), false,
+                              &passphrase, &error)) {
+    return fail(error);
+  }
+  fwds::EvpPkeyPtr key;
+  if (!store.loadPrivateKey(passphrase, &key, &error)) return fail(error);
+
+  fwds::Manifest manifest;
+  const QString outPath = parser.value(outOpt);
+  if (!fwds::signFirmware(parser.value(imageOpt), info, key.get(), outPath, &manifest, &error)) {
+    return fail(error);
+  }
+  // 自检：按设备和服务端的做法，用公钥把刚写出的包从头验一遍，不过就删掉
+  if (fwds::verifyPackageFile(outPath, verifier, &manifest, &error) != fwds::PackageCheck::Ok) {
+    QFile::remove(outPath);
+    return fail(QStringLiteral("打包后自检未通过（%1），已删除输出文件").arg(error));
+  }
+  out() << "固件包已签名：" << outPath << "\n";
+  printManifest(manifest);
+  return 0;
+}
+
+int cmdVerifyFw(const QStringList& args) {
+  QCommandLineParser parser;
+  parser.setApplicationDescription(
+      QStringLiteral("检查 .fwpkg：容器结构、manifest 签名、镜像长度、每片哈希、整镜像哈希（不需要口令）"));
+  const QCommandLineOption pubOpt(QStringLiteral("pubkey"), QStringLiteral("FSK 公钥 fsk.pub.pem（必填）"),
+                                  QStringLiteral("file"));
+  const QCommandLineOption pkgOpt(QStringLiteral("pkg"), QStringLiteral("要检查的 .fwpkg（必填）"),
+                                  QStringLiteral("file"));
+  parser.addHelpOption();
+  parser.addOption(pubOpt);
+  parser.addOption(pkgOpt);
+  parser.process(args);
+  if (!parser.isSet(pubOpt) || !parser.isSet(pkgOpt)) return fail(QStringLiteral("缺少 --pubkey 或 --pkg"));
+
+  fwds::ManifestVerifier verifier;
+  if (!loadVerifier(parser.value(pubOpt), &verifier)) return 1;
+  fwds::Manifest manifest;
+  QString error;
+  if (fwds::verifyPackageFile(parser.value(pkgOpt), verifier, &manifest, &error) !=
+      fwds::PackageCheck::Ok) {
+    return fail(QStringLiteral("固件包未通过检查：%1").arg(error));
+  }
+  out() << "固件包检查通过。公钥指纹：" << verifier.publicKeyFingerprint() << "\n";
+  printManifest(manifest);
+  return 0;
+}
+
 }  // namespace
 
 int main(int argc, char* argv[]) {
@@ -283,6 +436,9 @@ int main(int argc, char* argv[]) {
   if (command == QLatin1String("revoke")) return cmdRevoke(args);
   if (command == QLatin1String("update-crl")) return cmdUpdateCrl(args);
   if (command == QLatin1String("list-certs")) return cmdListCerts(args);
+  if (command == QLatin1String("fsk-init")) return cmdFskInit(args);
+  if (command == QLatin1String("sign-fw")) return cmdSignFw(args);
+  if (command == QLatin1String("verify-fw")) return cmdVerifyFw(args);
 
   for (const Command& c : kCommands) {
     if (command == QLatin1String(c.name)) {

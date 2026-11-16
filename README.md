@@ -19,11 +19,11 @@
 
 | 目录 | 内容 | 现状 |
 |---|---|---|
-| `common/` | 协议常量、FrameCodec、配置加载、日志、网络层公共部分（FrameChannel、重连退避、信道安全接口）；`crypto/`（SecureBuffer、AES-256-GCM、PBKDF2、私钥文件封装、X.509 读取）；`security/`（TLS 配置、证书完整校验、私钥口令注入） | 已实现 |
+| `common/` | 协议常量、FrameCodec、配置加载、日志、网络层公共部分（FrameChannel、重连退避、信道安全接口）；固件 manifest 和 .fwpkg 容器；`crypto/`（SecureBuffer、AES-256-GCM、PBKDF2、私钥文件封装、X.509 读取、SHA-256、RSA-3072-PSS 签名验签）；`security/`（TLS 配置、证书完整校验、私钥口令注入、ManifestVerifier：manifest 验签、分片哈希、整镜像校验） | 已实现 |
 | `server/` | 分发服务端 `fwds-server`：`net/`（TcpServer、Session、ConnLimiter）、`storage/`（SQLite）、`security/`（OperatorAuth：账号口令与角色权限）、`business/`（DeviceRegistry、LoginHandler、LoginThrottle、HeartbeatMonitor、AdminService、DispatchGate）、`ui/`（登录、设备监控、账号管理） | 网络层、TLS、设备注册表与指纹比对、登录失败锁定、账号与角色、“允许下发”开关、设备监控界面已实现；许可证验签（接入点已留）、固件库、灰度发布、审计哈希链待实现 |
-| `client/` | 设备客户端 `fwds-client`：`net/`（TcpClient：登录、心跳、断线重连）、`ui/` | 网络层和 TLS 已实现；界面为骨架 |
-| `signer/` | 离线签发工具 `fwds-signer` | 证书子命令已实现（`ca-init`、`issue-cert`、`revoke`、`update-crl`、`list-certs`）；固件签名、许可证待实现 |
-| `tests/` | GoogleTest 单元测试 | 147 条，覆盖帧编解码、配置、连接限制、加密基础件、证书校验、签发工具、TLS 双向认证、网络层（全部走真实 TLS）、账号口令与锁定、角色权限、设备注册表、设备登录（2005 / 2006 / 2007） |
+| `client/` | 设备客户端 `fwds-client`：`net/`（TcpClient：登录、心跳、断线重连）、`security/`（UpdateValidator：下载前验签、型号、防降级三项检查）、`ui/` | 网络层、TLS、下载前检查已实现（防降级判定为接入点，随 A/B 分区实现）；升级状态机、续传、Bootloader 待实现；界面为骨架 |
+| `signer/` | 离线签发工具 `fwds-signer` | 证书子命令（`ca-init`、`issue-cert`、`revoke`、`update-crl`、`list-certs`）和固件签名子命令（`fsk-init`、`sign-fw`、`verify-fw`）已实现；程序签名、许可证待实现 |
+| `tests/` | GoogleTest 单元测试 | 203 条，覆盖帧编解码、配置、连接限制、加密基础件、证书校验、签发工具、TLS 双向认证、网络层（全部走真实 TLS）、账号口令与锁定、角色权限、设备注册表、设备登录（2005 / 2006 / 2007）、RSA-PSS 签名验签、manifest 解析、先验签后解析、分片与整镜像校验、.fwpkg 容器与篡改检测 |
 | `deploy/config/` | `dev.ini`、`test.ini`、`prod.ini` 配置模板 | 已提供 |
 
 ## 构建与运行
@@ -77,6 +77,25 @@ build/dev/bin/fwds-client --config deploy/config/dev.ini
 多开设备：再签一张 `DEV-002` 的证书，复制一份配置（命名为 `*.local.ini`），改 `device_id` 和 `[client]` 的 `cert_file`、`key_file`。
 
 吊销演练：`fwds-signer revoke --ca-dir local/ca --name DEV-001`，然后用新的 `local/ca/crl.pem` 覆盖配置里 `crl_file` 指向的文件；服务端在下一次握手前自动重新加载，该设备重连即被拒绝。CRL 默认 30 天有效，到期前用 `fwds-signer update-crl` 刷新。
+
+### 固件签名
+
+固件签名密钥 FSK 和 CA 一样只放在签发主机上，下面的文件同样生成在 `local/` 下。
+
+```sh
+# 1. 生成固件签名密钥（RSA-3072）。提示设置 FSK 口令；结束时显示公钥指纹，记下来供分发公钥时核对
+build/dev/bin/fwds-signer fsk-init --fsk-dir local/fsk
+
+# 2. 给一个固件镜像签名并打包。提示输入 FSK 口令；写出 .fwpkg 后会自动用公钥完整检查一遍
+build/dev/bin/fwds-signer sign-fw --fsk-dir local/fsk --image fw_v2.1.0.bin \
+    --model PLC-X200 --fw-version 2.1.0 --security-version 5 --note "发布说明" \
+    --out local/fw/fw_v2.1.0_sv5.fwpkg
+
+# 3. 任何拿到公钥的人都可以检查一个固件包（不需要口令）
+build/dev/bin/fwds-signer verify-fw --pubkey local/fsk/fsk.pub.pem --pkg local/fw/fw_v2.1.0_sv5.fwpkg
+```
+
+`local/fsk/fsk.key` 是 AES-256-GCM 封装的私钥，不离开签发主机；`fsk.pub.pem` 是公钥，分发给服务端和设备。`--security-version` 只增不减：修了安全漏洞的版本加 1，设备据此拒绝装回旧固件。
 
 说明：
 
