@@ -41,6 +41,9 @@ class TlsChannelSecurity : public ChannelSecurity {
   const PeerIdentity& localIdentity() const { return localIdentity_; }
   QDateTime localCertNotAfter() const { return localNotAfter_; }
 
+  // 证书校验器（只读）。维护员注册设备时用它对导入的设备证书做同样的完整校验。
+  const CertVerifier& verifier() const { return verifier_; }
+
   void prepare(QSslSocket* socket, bool serverSide) override;
   QString verifyPeer(const QSslSocket* socket, bool serverSide, PeerIdentity* peer) override;
 

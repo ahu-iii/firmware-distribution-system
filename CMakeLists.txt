@@ -8,7 +8,7 @@ set(CMAKE_AUTOMOC ON)
 
 option(FWDS_BUILD_TESTS "构建单元测试" ON)
 
-find_package(Qt6 6.4 REQUIRED COMPONENTS Core Network Widgets)
+find_package(Qt6 6.4 REQUIRED COMPONENTS Core Network Sql Widgets)
 
 if(MSVC)
   add_compile_options(/W4 /utf-8)

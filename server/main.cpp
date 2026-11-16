@@ -5,14 +5,22 @@
 #include <QCommandLineParser>
 #include <QCoreApplication>
 #include <QDateTime>
+#include <QTimer>
 #include <memory>
 
 #include "common/config.h"
 #include "common/log.h"
 #include "common/security/key_store.h"
 #include "common/security/tls_channel.h"
+#include "server/business/admin_service.h"
+#include "server/business/device_registry.h"
+#include "server/business/dispatch_gate.h"
+#include "server/business/heartbeat_monitor.h"
 #include "server/business/login_handler.h"
+#include "server/business/login_throttle.h"
 #include "server/net/tcp_server.h"
+#include "server/security/operator_auth.h"
+#include "server/storage/database.h"
 #include "server/ui/main_window.h"
 
 // 建立 TLS 信道：私钥口令从环境变量取（取走即清除），证书和私钥文件的位置来自配置。
@@ -77,8 +85,33 @@ int main(int argc, char* argv[]) {
     qCWarning(fwds::lcSecurity) << "server certificate expires within 15 days, issue a new one";
   }
 
+  // 存储层：数据库（设备注册表、账号表）
+  fwds::Database database;
+  if (!database.open(config.dbFile, &error)) {
+    qCCritical(fwds::lcApp).noquote() << error;
+    return 4;
+  }
+  fwds::DeviceRegistry registry(&database);
+  if (!registry.load(&error)) {
+    qCCritical(fwds::lcApp).noquote() << error;
+    return 4;
+  }
+
+  // 安全层与业务层：账号、“允许下发”开关（每次启动默认关闭）、管理操作入口
+  fwds::OperatorAuth operatorAuth(&database);
+  fwds::DispatchGate dispatchGate;
+  fwds::AdminService admin(&operatorAuth, &registry, &dispatchGate);
+  admin.setCertVerifier(&security->verifier());
+
+  // 网络层 + 登录裁决 + 在线状态同步
   fwds::TcpServer server(config, security.get());
-  fwds::LoginHandler loginHandler(config.protocol);
+  fwds::LoginThrottle loginThrottle(config.loginFailLimit, config.loginFailWindowS * 1000LL,
+                                    config.loginLockS * 1000LL);
+  // 许可证验签依赖固件签名密钥（FSK），在“固件签名与验签”一步接入；这之前不检查许可证
+  fwds::LicenseVerifier* licenseVerifier = nullptr;
+  qCWarning(fwds::lcApp) << "license check is not available in this build, LOGIN skips it";
+  fwds::LoginHandler loginHandler(config.protocol, &registry, &loginThrottle, licenseVerifier);
+  fwds::HeartbeatMonitor heartbeatMonitor(&server, &registry);
   QObject::connect(&server, &fwds::TcpServer::sessionOpened, &loginHandler,
                    [&loginHandler](fwds::Session* session) {
                      QObject::connect(session, &fwds::Session::loginRequested, &loginHandler,
@@ -86,10 +119,13 @@ int main(int argc, char* argv[]) {
                    });
   if (!server.start()) return 1;
 
+  // 界面：先显示锁定的主窗口，事件循环转起来之后弹登录对话框。
+  // 无界面模式下没有人登录，只做监控，不能执行任何管理操作。
   std::unique_ptr<fwds::MainWindow> window;
   if (!headless) {
-    window = std::make_unique<fwds::MainWindow>(&server);
+    window = std::make_unique<fwds::MainWindow>(&server, &registry, &admin, &dispatchGate);
     window->show();
+    QTimer::singleShot(0, window.get(), &fwds::MainWindow::promptLogin);
   }
   return app->exec();
 }

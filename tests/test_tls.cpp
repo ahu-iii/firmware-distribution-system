@@ -14,7 +14,9 @@
 #include "common/crypto/key_file.h"
 #include "server/business/login_handler.h"
 #include "server/net/tcp_server.h"
+#include "server/business/heartbeat_monitor.h"
 #include "tests/test_pki.h"
+#include "tests/test_server_env.h"
 #include "tests/test_util.h"
 
 using namespace fwds;
@@ -42,7 +44,11 @@ struct TlsServer {
     config.maxConnectionsPerIp = 50;
     config.protocol = fastParams();
     server = std::make_unique<TcpServer>(config, security.get());
-    login = std::make_unique<LoginHandler>(config.protocol);
+    login = std::make_unique<LoginHandler>(config.protocol, &backend.registry, &backend.throttle);
+    monitor = std::make_unique<HeartbeatMonitor>(server.get(), &backend.registry);
+    // 共用证书体系里的两台设备默认已注册；自建证书体系的测试用 reg() 注册自己的设备
+    backend.registerDevice(sharedPki().dev001);
+    backend.registerDevice(sharedPki().dev002);
     QObject::connect(server.get(), &TcpServer::sessionOpened, [this](Session* s) {
       QObject::connect(s, &Session::loginRequested, login.get(), &LoginHandler::handle);
       QObject::connect(s, &Session::stateChanged, [this](Session* changed) {
@@ -55,11 +61,14 @@ struct TlsServer {
     EXPECT_TRUE(server->start());
   }
   quint16 port() const { return server->serverPort(); }
+  void reg(const Identity& identity) { backend.registerDevice(identity); }
 
+  fwds_test::ServerBackend backend;
   std::unique_ptr<TlsChannelSecurity> security;
   ServerConfig config;
   std::unique_ptr<TcpServer> server;
   std::unique_ptr<LoginHandler> login;
+  std::unique_ptr<HeartbeatMonitor> monitor;
   int reachedWaitLogin = 0;  // 握手和证书补充校验都通过的会话数
   int reachedOnline = 0;
   QStringList closeReasons;
@@ -305,6 +314,8 @@ TEST(Tls, RevokedDeviceIsRejectedOthersUnaffected) {
   const Identity dev1 = pki.issue(CertType::Device, QStringLiteral("DEV-001"));
   const Identity dev2 = pki.issue(CertType::Device, QStringLiteral("DEV-002"));
   TlsServer fx(pki.security(server));
+  fx.reg(dev1);
+  fx.reg(dev2);
 
   const auto sec2 = pki.security(dev2);
   TcpClient client2(clientConfig(fx.port(), QStringLiteral("DEV-002")), sec2.get());
@@ -382,6 +393,7 @@ TEST(Tls, LoadsFromFilesAndPicksUpNewCrlFile) {
   ASSERT_TRUE(serverSecurity->loadFiles(files, passphrase, &error)) << error.toStdString();
   EXPECT_EQ(serverSecurity->localIdentity().name, QStringLiteral("127.0.0.1"));
   TlsServer fx(std::move(serverSecurity));
+  fx.reg(dev2);
 
   const auto sec2 = pki.security(dev2);
   {
