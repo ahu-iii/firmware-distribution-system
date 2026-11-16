@@ -89,6 +89,22 @@ bool readProtocol(const QSettings& s, ProtocolParams* p, QString* error) {
   return true;
 }
 
+bool readCertDayLimits(const QSettings& s, TlsConfig* tls, QString* error) {
+  return readInt(s, QStringLiteral("tls/max_ca_cert_days"), 1, kMaxConfigurableCertDays,
+                 &tls->maxCaCertDays, error) &&
+         readInt(s, QStringLiteral("tls/max_cert_days"), 1, kMaxConfigurableCertDays,
+                 &tls->maxCertDays, error);
+}
+
+// [tls] 是两端共用的 CA 证书、CRL 和有效期上限；本端证书和私钥在各自的段（section）里。
+bool readTls(const QSettings& s, const QString& section, TlsConfig* tls, QString* error) {
+  return readRequiredString(s, QStringLiteral("tls/ca_file"), &tls->caFile, error) &&
+         readRequiredString(s, QStringLiteral("tls/crl_file"), &tls->crlFile, error) &&
+         readRequiredString(s, section + QStringLiteral("/cert_file"), &tls->certFile, error) &&
+         readRequiredString(s, section + QStringLiteral("/key_file"), &tls->keyFile, error) &&
+         readCertDayLimits(s, tls, error);
+}
+
 bool openSettings(const QString& path, QString* error) {
   const QFileInfo info(path);
   if (path.isEmpty() || !info.isFile() || !info.isReadable()) {
@@ -119,6 +135,7 @@ bool loadServerConfig(const QString& path, ServerConfig* out, QString* error) {
   }
   cfg.logLevel = s.value(QStringLiteral("log/level"), cfg.logLevel).toString().trimmed().toUpper();
   if (!readProtocol(s, &cfg.protocol, error)) return false;
+  if (!readTls(s, QStringLiteral("server"), &cfg.tls, error)) return false;
 
   *out = cfg;
   return true;
@@ -137,7 +154,23 @@ bool loadClientConfig(const QString& path, ClientConfig* out, QString* error) {
   }
   cfg.logLevel = s.value(QStringLiteral("log/level"), cfg.logLevel).toString().trimmed().toUpper();
   if (!readProtocol(s, &cfg.protocol, error)) return false;
+  if (!readTls(s, QStringLiteral("client"), &cfg.tls, error)) return false;
 
+  *out = cfg;
+  return true;
+}
+
+bool loadSignerConfig(const QString& path, SignerConfig* out, QString* error) {
+  if (!openSettings(path, error)) return false;
+  const QSettings s(path, QSettings::IniFormat);
+  TlsConfig tls;
+  SignerConfig cfg;
+  if (!readCertDayLimits(s, &tls, error) ||
+      !readInt(s, QStringLiteral("signer/crl_valid_days"), 1, 365, &cfg.crlValidDays, error)) {
+    return false;
+  }
+  cfg.maxCaCertDays = tls.maxCaCertDays;
+  cfg.maxCertDays = tls.maxCertDays;
   *out = cfg;
   return true;
 }

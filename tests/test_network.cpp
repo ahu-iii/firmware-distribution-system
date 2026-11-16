@@ -1,18 +1,20 @@
-// 网络层联调测试：在本机回环上起真实的 TcpServer / TcpClient（明文开发信道），
-// 覆盖登录、心跳、序号检查、非法帧、各类超时和断线重连。
+// 网络层联调测试：在本机回环上起真实的 TcpServer / TcpClient，走真实的 TLS 1.3 双向认证
+// （证书由 tests/test_pki.h 在内存里现签），覆盖登录、心跳、序号检查、非法帧、各类超时和断线重连。
 // 端口用 0 让系统分配，超时参数缩短到几百毫秒以内。
 #include <QJsonDocument>
+#include <QSslSocket>
 #include <QTcpServer>
 #include <QTcpSocket>
 #include <gtest/gtest.h>
 
 #include "client/net/tcp_client.h"
-#include "common/net/plaintext_dev_channel.h"
 #include "server/business/login_handler.h"
 #include "server/net/tcp_server.h"
+#include "tests/test_pki.h"
 #include "tests/test_util.h"
 
 using namespace fwds;
+using fwds_test::sharedPki;
 
 namespace {
 
@@ -49,7 +51,7 @@ struct ServerFixture {
     config.listenPort = 0;
     config.maxConnectionsPerIp = maxPerIp;
     config.protocol = params;
-    server = std::make_unique<TcpServer>(config, &security);
+    server = std::make_unique<TcpServer>(config, security.get());
     login = std::make_unique<LoginHandler>(params);
     QObject::connect(server.get(), &TcpServer::sessionOpened, [this](Session* s) {
       ++opened;
@@ -70,7 +72,7 @@ struct ServerFixture {
     return n;
   }
 
-  PlaintextDevChannel security;
+  std::unique_ptr<TlsChannelSecurity> security = sharedPki().pki.security(sharedPki().server);
   ServerConfig config;
   std::unique_ptr<TcpServer> server;
   std::unique_ptr<LoginHandler> login;
@@ -81,11 +83,13 @@ struct ServerFixture {
 };
 
 // 手工拼帧的“原始客户端”，用来发协议实现不会发的非法数据。
+// 用 DEV-001 的证书完成 TLS 握手，之后在加密信道里写任意字节。
 struct RawPeer {
   explicit RawPeer(quint16 port) {
     // 用信号记录“连上过”：被服务端立刻断开时，状态可能在一次事件处理里就回到未连接
-    QObject::connect(&socket, &QTcpSocket::connected, [this]() { everConnected = true; });
-    socket.connectToHost(QHostAddress::LocalHost, port);
+    QObject::connect(&socket, &QAbstractSocket::connected, [this]() { everConnected = true; });
+    security->prepare(&socket, false);
+    socket.connectToHostEncrypted(QStringLiteral("127.0.0.1"), port);
     EXPECT_TRUE(waitFor([this]() { return everConnected; }));
   }
   void write(const QByteArray& data) { socket.write(data); }
@@ -102,10 +106,31 @@ struct RawPeer {
     while (decoder.next(&f) == DecodeStatus::FrameReady) frames.append(f);
     return frames;
   }
-  QTcpSocket socket;
+  std::unique_ptr<TlsChannelSecurity> security = sharedPki().pki.security(sharedPki().dev001);
+  QSslSocket socket;
   FrameDecoder decoder;
   bool everConnected = false;
   bool closedByPeer = false;
+};
+
+// 能完成 TLS 握手、但之后不按协议应答的服务端，用来测客户端的超时处理。
+class MuteTlsServer : public QTcpServer {
+ public:
+  std::function<void(QSslSocket*)> onEncrypted;
+
+ protected:
+  void incomingConnection(qintptr descriptor) override {
+    auto* socket = new QSslSocket(this);
+    socket->setSocketDescriptor(descriptor);
+    security_->prepare(socket, true);
+    connect(socket, &QSslSocket::encrypted, this, [this, socket]() {
+      if (onEncrypted) onEncrypted(socket);
+    });
+    socket->startServerEncryption();
+  }
+
+ private:
+  std::unique_ptr<TlsChannelSecurity> security_ = sharedPki().pki.security(sharedPki().server);
 };
 
 ClientConfig clientConfig(quint16 port, ProtocolParams params = fastParams()) {
@@ -128,8 +153,8 @@ void useValidLogin(TcpClient& client) {
 
 TEST(Network, LoginThenHeartbeatsAreAcked) {
   ServerFixture fx;
-  PlaintextDevChannel security;
-  TcpClient client(clientConfig(fx.port()), &security);
+  const auto security = sharedPki().pki.security(sharedPki().dev001);
+  TcpClient client(clientConfig(fx.port()), security.get());
   useValidLogin(client);
   int acks = 0;
   QJsonObject loginResult;
@@ -346,8 +371,8 @@ TEST(Network, ClientRetriesWithBackoffUntilServerAppears) {
     ASSERT_TRUE(probe.listen(QHostAddress::LocalHost, 0));
     port = probe.serverPort();
   }
-  PlaintextDevChannel security;
-  TcpClient client(clientConfig(port), &security);
+  const auto security = sharedPki().pki.security(sharedPki().dev001);
+  TcpClient client(clientConfig(port), security.get());
   useValidLogin(client);
   QList<int> delays;
   QObject::connect(&client, &TcpClient::reconnectScheduled,
@@ -359,7 +384,7 @@ TEST(Network, ClientRetriesWithBackoffUntilServerAppears) {
   ServerFixture fx;
   fx.server->close();
   fx.config.listenPort = port;
-  fx.server = std::make_unique<TcpServer>(fx.config, &fx.security);
+  fx.server = std::make_unique<TcpServer>(fx.config, fx.security.get());
   QObject::connect(fx.server.get(), &TcpServer::sessionOpened, [&fx](Session* s) {
     QObject::connect(s, &Session::loginRequested, fx.login.get(), &LoginHandler::handle);
   });
@@ -370,8 +395,8 @@ TEST(Network, ClientRetriesWithBackoffUntilServerAppears) {
 // 在线时被服务端踢掉：重连、重新登录，退避从头开始
 TEST(Network, ClientReconnectsAfterServerDropsConnection) {
   ServerFixture fx;
-  PlaintextDevChannel security;
-  TcpClient client(clientConfig(fx.port()), &security);
+  const auto security = sharedPki().pki.security(sharedPki().dev001);
+  TcpClient client(clientConfig(fx.port()), security.get());
   useValidLogin(client);
   QList<int> delays;
   int logins = 0;
@@ -396,19 +421,18 @@ TEST(Network, ClientReconnectsAfterServerDropsConnection) {
 
 // 服务端登录后不再应答心跳（模拟半开连接）：客户端超时后主动断开重连
 TEST(Network, ClientDropsConnectionWhenAcksStop) {
-  QTcpServer mute;
+  MuteTlsServer mute;
   ASSERT_TRUE(mute.listen(QHostAddress::LocalHost, 0));
   int connections = 0;
-  QObject::connect(&mute, &QTcpServer::newConnection, [&]() {
-    QTcpSocket* s = mute.nextPendingConnection();
+  mute.onEncrypted = [&](QSslSocket* s) {
     ++connections;
     // 只回 LOGIN_RESULT(OK)，之后保持沉默
     QJsonObject ok;
     ok.insert(QStringLiteral("result"), QStringLiteral("OK"));
     s->write(wire(MsgType::LoginResult, 1, QJsonDocument(ok).toJson(QJsonDocument::Compact)));
-  });
-  PlaintextDevChannel security;
-  TcpClient client(clientConfig(mute.serverPort()), &security);
+  };
+  const auto security = sharedPki().pki.security(sharedPki().dev001);
+  TcpClient client(clientConfig(mute.serverPort()), security.get());
   useValidLogin(client);
   QStringList reasons;
   QObject::connect(&client, &TcpClient::reconnectScheduled,
@@ -420,12 +444,12 @@ TEST(Network, ClientDropsConnectionWhenAcksStop) {
   ASSERT_TRUE(waitFor([&]() { return connections >= 2; }));  // 已经发起了重连
 }
 
-// 服务端接受 TCP 但不回 LOGIN_RESULT：客户端在登录时限后放弃这条连接
+// 服务端接受 TCP 但既不握手也不回 LOGIN_RESULT：客户端在登录时限后放弃这条连接
 TEST(Network, ClientGivesUpWhenLoginResultNeverArrives) {
   QTcpServer mute;
   ASSERT_TRUE(mute.listen(QHostAddress::LocalHost, 0));
-  PlaintextDevChannel security;
-  TcpClient client(clientConfig(mute.serverPort()), &security);
+  const auto security = sharedPki().pki.security(sharedPki().dev001);
+  TcpClient client(clientConfig(mute.serverPort()), security.get());
   useValidLogin(client);
   QStringList reasons;
   QObject::connect(&client, &TcpClient::reconnectScheduled,
@@ -438,8 +462,8 @@ TEST(Network, ClientGivesUpWhenLoginResultNeverArrives) {
 // 登录被拒：通知上层错误码，然后继续按退避重试（不重置退避）
 TEST(Network, ClientReportsLoginFailureAndKeepsBackingOff) {
   ServerFixture fx;
-  PlaintextDevChannel security;
-  TcpClient client(clientConfig(fx.port()), &security);
+  const auto security = sharedPki().pki.security(sharedPki().dev001);
+  TcpClient client(clientConfig(fx.port()), security.get());
   client.setLoginProvider([]() {
     return QJsonDocument::fromJson(loginBody(QDateTime::currentMSecsSinceEpoch() - 120000)).object();
   });
@@ -458,8 +482,8 @@ TEST(Network, ClientReportsLoginFailureAndKeepsBackingOff) {
 // 服务端向在线设备发业务帧，客户端原样交给上层
 TEST(Network, BusinessFramesPassThroughBothWays) {
   ServerFixture fx;
-  PlaintextDevChannel security;
-  TcpClient client(clientConfig(fx.port()), &security);
+  const auto security = sharedPki().pki.security(sharedPki().dev001);
+  TcpClient client(clientConfig(fx.port()), security.get());
   useValidLogin(client);
   QList<Frame> atClient;
   QList<Frame> atServer;

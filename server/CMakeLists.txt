@@ -17,6 +17,3 @@ add_executable(fwds-server
   ui/main_window.cpp
 )
 target_link_libraries(fwds-server PRIVATE fwds_server_lib Qt6::Widgets)
-if(FWDS_DEV_PLAINTEXT)
-  target_compile_definitions(fwds-server PRIVATE FWDS_DEV_PLAINTEXT)
-endif()

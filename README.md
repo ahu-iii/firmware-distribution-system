@@ -19,19 +19,19 @@
 
 | 目录 | 内容 | 现状 |
 |---|---|---|
-| `common/` | 协议常量、FrameCodec、配置加载、日志、网络层公共部分（FrameChannel、重连退避、信道安全接口） | 已实现 |
-| `server/` | 分发服务端 `fwds-server`：`net/`（TcpServer、Session、ConnLimiter）、`business/`、`ui/` | 网络层已实现；登录检查和界面为骨架 |
-| `client/` | 设备客户端 `fwds-client`：`net/`（TcpClient：登录、心跳、断线重连）、`ui/` | 网络层已实现；界面为骨架 |
-| `signer/` | 离线签发工具 `fwds-signer` | 只有子命令框架 |
-| `tests/` | GoogleTest 单元测试 | 47 条，覆盖帧编解码、配置、连接限制、网络层 |
+| `common/` | 协议常量、FrameCodec、配置加载、日志、网络层公共部分（FrameChannel、重连退避、信道安全接口）；`crypto/`（SecureBuffer、AES-256-GCM、PBKDF2、私钥文件封装、X.509 读取）；`security/`（TLS 配置、证书完整校验、私钥口令注入） | 已实现 |
+| `server/` | 分发服务端 `fwds-server`：`net/`（TcpServer、Session、ConnLimiter）、`business/`、`ui/` | 网络层和 TLS 已实现；登录检查已含证书名称比对，注册表、许可证待接入；界面为骨架 |
+| `client/` | 设备客户端 `fwds-client`：`net/`（TcpClient：登录、心跳、断线重连）、`ui/` | 网络层和 TLS 已实现；界面为骨架 |
+| `signer/` | 离线签发工具 `fwds-signer` | 证书子命令已实现（`ca-init`、`issue-cert`、`revoke`、`update-crl`、`list-certs`）；固件签名、许可证待实现 |
+| `tests/` | GoogleTest 单元测试 | 109 条，覆盖帧编解码、配置、连接限制、加密基础件、证书校验、签发工具、TLS 双向认证、网络层（全部走真实 TLS） |
 | `deploy/config/` | `dev.ini`、`test.ini`、`prod.ini` 配置模板 | 已提供 |
 
 ## 构建与运行
 
-依赖：CMake 3.20+、支持 C++17 的编译器、Qt 6.4+（Core、Network、Widgets）、GoogleTest（系统没有时构建脚本会在线拉取）。Ubuntu 24.04 上：
+依赖：CMake 3.20+、支持 C++17 的编译器、Qt 6.4+（Core、Network、Widgets）、OpenSSL 3、GoogleTest（系统没有时构建脚本会在线拉取）。Ubuntu 24.04 上：
 
 ```sh
-sudo apt install cmake ninja-build g++ qt6-base-dev libgtest-dev
+sudo apt install cmake ninja-build g++ qt6-base-dev libssl-dev libgtest-dev
 ```
 
 构建并运行单元测试：
@@ -42,14 +42,37 @@ cmake --build --preset dev
 ctest --preset dev
 ```
 
-本机联调（两个终端；加 `--headless` 则不显示界面）：
+### 本机联调
+
+两端只在 TLS 1.3 双向证书认证的信道上通信，没有明文模式，所以联调前要先用签发工具建一套本机用的证书。下面的命令在仓库根目录执行，生成的文件都在 `local/` 下（已在 `.gitignore` 中，不会进仓库）。
 
 ```sh
+# 1. 建 CA。提示输入 CA 口令（至少 12 个字符，输入不回显），以后每次签发、吊销都要输入
+build/dev/bin/fwds-signer ca-init --ca-dir local/ca --config deploy/config/dev.ini
+
+# 2. 签发服务端证书（名称 = 客户端配置里的 server_host）和一台设备的证书（名称 = device_id）
+#    每条命令会再提示为新私钥设置口令
+build/dev/bin/fwds-signer issue-cert --ca-dir local/ca --type server --name 127.0.0.1 \
+    --out-dir local/pki/server --config deploy/config/dev.ini
+build/dev/bin/fwds-signer issue-cert --ca-dir local/ca --type device --name DEV-001 \
+    --out-dir local/pki/DEV-001 --config deploy/config/dev.ini
+
+# 3. 两个终端分别启动。私钥口令通过环境变量注入，程序读取后立即从环境中清除
+#    （read -s 不回显、不进命令历史；加 --headless 则不显示界面）
+read -s FWDS_KEY_PASSPHRASE && export FWDS_KEY_PASSPHRASE
 build/dev/bin/fwds-server --config deploy/config/dev.ini
+
+read -s FWDS_KEY_PASSPHRASE && export FWDS_KEY_PASSPHRASE
 build/dev/bin/fwds-client --config deploy/config/dev.ini
 ```
 
+多开设备：再签一张 `DEV-002` 的证书，复制一份配置（命名为 `*.local.ini`），改 `device_id` 和 `[client]` 的 `cert_file`、`key_file`。
+
+吊销演练：`fwds-signer revoke --ca-dir local/ca --name DEV-001`，然后用新的 `local/ca/crl.pem` 覆盖配置里 `crl_file` 指向的文件；服务端在下一次握手前自动重新加载，该设备重连即被拒绝。CRL 默认 30 天有效，到期前用 `fwds-signer update-crl` 刷新。
+
 说明：
 
-- 地址、端口、设备 ID 和协议参数全部来自 `--config` 指定的配置文件，源码里不写死。`test.ini`、`prod.ini` 中的 `<...>` 占位符没改就启动会报错退出。现场用的配置复制到仓库之外或命名为 `*.local.ini`（已在 `.gitignore` 中）。
-- **TLS 层尚未实现。** `dev` 预设打开了 `FWDS_DEV_PLAINTEXT`，两端用明文信道联调网络层，启动时会打印一条 SECURITY 告警。`release` 预设不含明文信道，在 TLS 层合入之前程序会拒绝启动网络。TLS 层合入后删除这个开关。
+- 地址、端口、设备 ID、证书路径、证书有效期上限和协议参数全部来自 `--config` 指定的配置文件，源码里不写死。`test.ini`、`prod.ini` 中的 `<...>` 占位符没改就启动会报错退出。现场用的配置复制到仓库之外或命名为 `*.local.ini`（已在 `.gitignore` 中）。
+- 私钥文件用 AES-256-GCM 封装（口令经 PBKDF2-HMAC-SHA256 派生），口令不写入任何配置文件。缺少证书、私钥或口令时程序不会启动网络。
+- 证书有效期上限在配置 `[tls]` 的 `max_ca_cert_days`（默认 365）和 `max_cert_days`（默认 90）里：签发工具不签超过上限的证书，两端也不接受。课程规定的上限确定后只改这两项。
+- 单元测试用到的 CA 和证书在测试运行时现场生成，仓库里没有任何测试私钥。

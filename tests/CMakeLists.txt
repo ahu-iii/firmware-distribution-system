@@ -16,8 +16,13 @@ add_executable(fwds-tests
   test_config.cpp
   test_conn_limiter.cpp
   test_network.cpp
+  test_pki.h
+  test_crypto.cpp
+  test_cert_verifier.cpp
+  test_ca_store.cpp
+  test_tls.cpp
 )
-target_link_libraries(fwds-tests PRIVATE fwds_server_lib fwds_client_lib GTest::gtest)
+target_link_libraries(fwds-tests PRIVATE fwds_server_lib fwds_client_lib fwds_signer_lib GTest::gtest)
 
 include(GoogleTest)
 gtest_discover_tests(fwds-tests)
