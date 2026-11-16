@@ -1,0 +1,15 @@
+build/
+CMakeUserPresets.json
+*.user
+.vscode/
+.idea/
+
+# 运行期数据与密钥材料一律不进仓库
+*.key
+*.pem
+*.p12
+*.lic
+*.db
+/data/
+/local/
+*.local.ini
