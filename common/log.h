@@ -4,6 +4,7 @@
 #pragma once
 
 #include <QLoggingCategory>
+#include <QObject>
 #include <QString>
 
 namespace fwds {
@@ -11,8 +12,19 @@ namespace fwds {
 Q_DECLARE_LOGGING_CATEGORY(lcNet)       // 网络层
 Q_DECLARE_LOGGING_CATEGORY(lcSecurity)  // 安全事件（非法帧、疑似重放等）
 Q_DECLARE_LOGGING_CATEGORY(lcApp)       // 程序启动与配置
+Q_DECLARE_LOGGING_CATEGORY(lcAudit)     // 管理操作留痕：谁、做了什么、结果（审计哈希链完成后同时写入审计表）
 
 // 安装日志格式并按级别过滤。level 取 DEBUG / INFO / WARN / ERROR。
 void initLogging(const QString& level);
+
+// LogBus：把安全事件和管理操作的日志同时转给界面（服务端“安全告警”列表）。
+// 界面只连这个信号，不直接读日志文件；内容与写到标准错误的那一行相同，同样不含敏感数据。
+class LogBus : public QObject {
+  Q_OBJECT
+ signals:
+  // alert 为 true 表示这是一条安全告警（界面标红），false 是普通的管理操作记录。
+  void event(const QString& time, bool alert, const QString& text);
+};
+LogBus* logBus();
 
 }  // namespace fwds

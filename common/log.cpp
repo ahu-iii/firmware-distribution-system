@@ -8,6 +8,12 @@ namespace fwds {
 Q_LOGGING_CATEGORY(lcNet, "fwds.net")
 Q_LOGGING_CATEGORY(lcSecurity, "fwds.security")
 Q_LOGGING_CATEGORY(lcApp, "fwds.app")
+Q_LOGGING_CATEGORY(lcAudit, "fwds.audit")
+
+LogBus* logBus() {
+  static LogBus bus;
+  return &bus;
+}
 
 namespace {
 
@@ -48,6 +54,14 @@ void handler(QtMsgType type, const QMessageLogContext& ctx, const QString& msg) 
   std::fprintf(stderr, "%s [%s] [%s] %s\n", time.constData(), levelName(type, ctx.category),
                ctx.category ? ctx.category : "default", text.constData());
   std::fflush(stderr);
+
+  // 安全事件（WARN 及以上）和管理操作记录转给界面
+  if (!ctx.category) return;
+  const bool security = qstrcmp(ctx.category, "fwds.security") == 0 && rank(type) >= 2;
+  const bool audit = qstrcmp(ctx.category, "fwds.audit") == 0;
+  if (security || audit) {
+    emit logBus()->event(QString::fromUtf8(time), security || rank(type) >= 2, msg);
+  }
 }
 
 }  // namespace

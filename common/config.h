@@ -37,6 +37,11 @@ struct ServerConfig {
   quint16 listenPort = 0;
   int maxConnections = 200;
   int maxConnectionsPerIp = 5;
+  QString dbFile;  // SQLite 数据库文件（设备注册表、账号表）
+  // 设备登录失败锁定（设计第 14 节）：windowS 秒内失败 limit 次，锁定 lockS 秒
+  int loginFailLimit = 5;
+  int loginFailWindowS = 300;
+  int loginLockS = 600;
   QString logLevel = QStringLiteral("INFO");
   ProtocolParams protocol;
   TlsConfig tls;

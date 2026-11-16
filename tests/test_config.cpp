@@ -22,7 +22,7 @@ class ConfigTest : public ::testing::Test {
 };
 
 // 两端都必填的 TLS 配置
-const QByteArray kServerTls = "cert_file=s.pem\nkey_file=s.key\n";
+const QByteArray kServerTls = "db_file=s.db\ncert_file=s.pem\nkey_file=s.key\n";
 const QByteArray kClientTls = "cert_file=d.pem\nkey_file=d.key\n";
 const QByteArray kTls = "[tls]\nca_file=ca.pem\ncrl_file=crl.pem\n";
 

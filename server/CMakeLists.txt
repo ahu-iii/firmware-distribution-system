@@ -1,4 +1,4 @@
-# 服务端的网络层和业务层编成一个库，主程序和单元测试都链接它
+# 服务端的网络层、安全层、业务层、存储层编成一个库，主程序和单元测试都链接它
 add_library(fwds_server_lib STATIC
   net/conn_limiter.h
   net/conn_limiter.cpp
@@ -6,14 +6,36 @@ add_library(fwds_server_lib STATIC
   net/session.cpp
   net/tcp_server.h
   net/tcp_server.cpp
+  storage/database.h
+  storage/database.cpp
+  security/operator_auth.h
+  security/operator_auth.cpp
+  business/device_registry.h
+  business/device_registry.cpp
+  business/login_throttle.h
+  business/login_throttle.cpp
+  business/license_verifier.h
   business/login_handler.h
   business/login_handler.cpp
+  business/heartbeat_monitor.h
+  business/heartbeat_monitor.cpp
+  business/dispatch_gate.h
+  business/admin_service.h
+  business/admin_service.cpp
 )
-target_link_libraries(fwds_server_lib PUBLIC fwds_common)
+target_link_libraries(fwds_server_lib PUBLIC fwds_common Qt6::Sql)
 
 add_executable(fwds-server
   main.cpp
   ui/main_window.h
   ui/main_window.cpp
+  ui/login_dialog.h
+  ui/login_dialog.cpp
+  ui/device_table_model.h
+  ui/device_table_model.cpp
+  ui/device_page.h
+  ui/device_page.cpp
+  ui/account_page.h
+  ui/account_page.cpp
 )
 target_link_libraries(fwds-server PRIVATE fwds_server_lib Qt6::Widgets)

@@ -10,7 +10,9 @@
 #include "client/net/tcp_client.h"
 #include "server/business/login_handler.h"
 #include "server/net/tcp_server.h"
+#include "server/business/heartbeat_monitor.h"
 #include "tests/test_pki.h"
+#include "tests/test_server_env.h"
 #include "tests/test_util.h"
 
 using namespace fwds;
@@ -52,7 +54,9 @@ struct ServerFixture {
     config.maxConnectionsPerIp = maxPerIp;
     config.protocol = params;
     server = std::make_unique<TcpServer>(config, security.get());
-    login = std::make_unique<LoginHandler>(params);
+    login = std::make_unique<LoginHandler>(params, &backend.registry, &backend.throttle);
+    backend.registerDevice(sharedPki().dev001);
+    backend.registerDevice(sharedPki().dev002);
     QObject::connect(server.get(), &TcpServer::sessionOpened, [this](Session* s) {
       ++opened;
       QObject::connect(s, &Session::loginRequested, login.get(), &LoginHandler::handle);
@@ -72,6 +76,7 @@ struct ServerFixture {
     return n;
   }
 
+  fwds_test::ServerBackend backend;
   std::unique_ptr<TlsChannelSecurity> security = sharedPki().pki.security(sharedPki().server);
   ServerConfig config;
   std::unique_ptr<TcpServer> server;

@@ -20,18 +20,18 @@
 | 目录 | 内容 | 现状 |
 |---|---|---|
 | `common/` | 协议常量、FrameCodec、配置加载、日志、网络层公共部分（FrameChannel、重连退避、信道安全接口）；`crypto/`（SecureBuffer、AES-256-GCM、PBKDF2、私钥文件封装、X.509 读取）；`security/`（TLS 配置、证书完整校验、私钥口令注入） | 已实现 |
-| `server/` | 分发服务端 `fwds-server`：`net/`（TcpServer、Session、ConnLimiter）、`business/`、`ui/` | 网络层和 TLS 已实现；登录检查已含证书名称比对，注册表、许可证待接入；界面为骨架 |
+| `server/` | 分发服务端 `fwds-server`：`net/`（TcpServer、Session、ConnLimiter）、`storage/`（SQLite）、`security/`（OperatorAuth：账号口令与角色权限）、`business/`（DeviceRegistry、LoginHandler、LoginThrottle、HeartbeatMonitor、AdminService、DispatchGate）、`ui/`（登录、设备监控、账号管理） | 网络层、TLS、设备注册表与指纹比对、登录失败锁定、账号与角色、“允许下发”开关、设备监控界面已实现；许可证验签（接入点已留）、固件库、灰度发布、审计哈希链待实现 |
 | `client/` | 设备客户端 `fwds-client`：`net/`（TcpClient：登录、心跳、断线重连）、`ui/` | 网络层和 TLS 已实现；界面为骨架 |
 | `signer/` | 离线签发工具 `fwds-signer` | 证书子命令已实现（`ca-init`、`issue-cert`、`revoke`、`update-crl`、`list-certs`）；固件签名、许可证待实现 |
-| `tests/` | GoogleTest 单元测试 | 109 条，覆盖帧编解码、配置、连接限制、加密基础件、证书校验、签发工具、TLS 双向认证、网络层（全部走真实 TLS） |
+| `tests/` | GoogleTest 单元测试 | 147 条，覆盖帧编解码、配置、连接限制、加密基础件、证书校验、签发工具、TLS 双向认证、网络层（全部走真实 TLS）、账号口令与锁定、角色权限、设备注册表、设备登录（2005 / 2006 / 2007） |
 | `deploy/config/` | `dev.ini`、`test.ini`、`prod.ini` 配置模板 | 已提供 |
 
 ## 构建与运行
 
-依赖：CMake 3.20+、支持 C++17 的编译器、Qt 6.4+（Core、Network、Widgets）、OpenSSL 3、GoogleTest（系统没有时构建脚本会在线拉取）。Ubuntu 24.04 上：
+依赖：CMake 3.20+、支持 C++17 的编译器、Qt 6.4+（Core、Network、Sql、Widgets，SQLite 驱动）、OpenSSL 3、GoogleTest（系统没有时构建脚本会在线拉取）。Ubuntu 24.04 上：
 
 ```sh
-sudo apt install cmake ninja-build g++ qt6-base-dev libssl-dev libgtest-dev
+sudo apt install cmake ninja-build g++ qt6-base-dev libqt6sql6-sqlite libssl-dev libgtest-dev
 ```
 
 构建并运行单元测试：
@@ -65,6 +65,14 @@ build/dev/bin/fwds-server --config deploy/config/dev.ini
 read -s FWDS_KEY_PASSPHRASE && export FWDS_KEY_PASSPHRASE
 build/dev/bin/fwds-client --config deploy/config/dev.ini
 ```
+
+服务端第一次启动时账号表是空的，界面会先要求创建一个维护员账号（口令至少 10 个字符，含字母和数字）。之后：
+
+1. 用维护员登录，在“设备监控”页点“注册设备…”，选择 `local/pki/DEV-001/device.pem`，填型号（如 `PLC-X200`）和分组。设备 ID 和证书指纹从证书里读取；没注册的设备登录会得到 `2005`。
+2. 其他角色的账号在“账号管理”页创建。新账号第一次登录必须先改掉初始口令。
+3. 窗口右上角的“允许下发”默认关闭（只监控），只有维护员能打开；服务端每次重启后回到关闭。
+
+数据库文件的位置在配置 `[server] db_file`（dev 模板为 `local/data/fwds-server.db`）。加 `--headless` 运行时没有账号登录，只做监控，不能执行管理操作。
 
 多开设备：再签一张 `DEV-002` 的证书，复制一份配置（命名为 `*.local.ini`），改 `device_id` 和 `[client]` 的 `cert_file`、`key_file`。
 

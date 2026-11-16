@@ -133,6 +133,12 @@ bool loadServerConfig(const QString& path, ServerConfig* out, QString* error) {
                &cfg.maxConnectionsPerIp, error)) {
     return false;
   }
+  if (!readRequiredString(s, QStringLiteral("server/db_file"), &cfg.dbFile, error)) return false;
+  if (!readInt(s, QStringLiteral("server/login_fail_limit"), 1, 1000, &cfg.loginFailLimit, error) ||
+      !readInt(s, QStringLiteral("server/login_fail_window_s"), 1, 86400, &cfg.loginFailWindowS, error) ||
+      !readInt(s, QStringLiteral("server/login_lock_s"), 1, 86400, &cfg.loginLockS, error)) {
+    return false;
+  }
   cfg.logLevel = s.value(QStringLiteral("log/level"), cfg.logLevel).toString().trimmed().toUpper();
   if (!readProtocol(s, &cfg.protocol, error)) return false;
   if (!readTls(s, QStringLiteral("server"), &cfg.tls, error)) return false;
