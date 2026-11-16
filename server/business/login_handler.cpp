@@ -52,8 +52,17 @@ void LoginHandler::handle(Session* session, const QByteArray& body) {
     return;
   }
 
-  // TODO(安全层)：device_id 必须等于对端证书名称，否则 2003
-  // TODO(DeviceRegistry)：已注册、未停用、证书指纹一致，否则 2005
+  // 上下文绑定（设计 10.6 节）：LOGIN 里自报的设备 ID 必须就是 TLS 握手时出示的那张证书的名称。
+  // 否则持有 DEV-002 证书的设备可以自称 DEV-001。
+  const PeerIdentity& peer = session->peerIdentity();
+  if (peer.name.isEmpty() || deviceId != peer.name) {
+    qCCritical(lcSecurity) << "session" << session->id() << "LOGIN device_id" << deviceId
+                           << "does not match certificate name" << peer.name;
+    session->rejectLogin(failResult(ErrorCode::IdCertMismatch));
+    return;
+  }
+
+  // TODO(DeviceRegistry)：已注册、未停用、证书指纹（peer.fingerprint）与注册表一致，否则 2005
   // TODO(安全层)：许可证签名与设备 ID，否则 2006
   // TODO(ConnLimiter)：登录失败计数与锁定，2007
 

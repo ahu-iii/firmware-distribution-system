@@ -58,22 +58,20 @@ void TcpClient::connectNow() {
   loginTimer_.start(config_.protocol.loginTimeoutMs);
   qCInfo(lcNet) << "connecting to" << config_.serverHost << config_.serverPort;
 
-  if (security_->encrypted()) {
-    security_->prepare(socket_, false);
-    connect(socket_, &QSslSocket::encrypted, this, [this]() {
-      const QString reason = security_->verifyPeer(socket_, false);
-      if (!reason.isEmpty()) {
-        qCCritical(lcSecurity) << "server certificate rejected:" << reason;
-        dropConnection(QStringLiteral("服务端证书校验失败"));
-        return;
-      }
-      onChannelReady();
-    });
-    socket_->connectToHostEncrypted(config_.serverHost, config_.serverPort);
-  } else {
-    connect(socket_, &QAbstractSocket::connected, this, &TcpClient::onChannelReady);
-    socket_->connectToHost(config_.serverHost, config_.serverPort);
-  }
+  // 先 TLS 握手（Qt 在握手里校验服务端证书链、有效期和名称），
+  // 再做补充校验（吊销等）；都通过才发 LOGIN。任何一步失败都按退避重连，不发送任何业务数据。
+  security_->prepare(socket_, false);
+  connect(socket_, &QSslSocket::encrypted, this, [this]() {
+    PeerIdentity server;
+    const QString reason = security_->verifyPeer(socket_, false, &server);
+    if (!reason.isEmpty()) {
+      qCCritical(lcSecurity).noquote() << "server certificate rejected:" << reason;
+      dropConnection(QStringLiteral("服务端证书校验失败"));
+      return;
+    }
+    onChannelReady();
+  });
+  socket_->connectToHostEncrypted(config_.serverHost, config_.serverPort);
 }
 
 void TcpClient::onChannelReady() {

@@ -1,30 +1,34 @@
 // fwds-server：分发服务端入口。
 // 用法：fwds-server --config <配置文件> [--headless]
+// 启动前须设置环境变量 FWDS_KEY_PASSPHRASE（服务端私钥口令），程序读取后立即清除。
 #include <QApplication>
 #include <QCommandLineParser>
 #include <QCoreApplication>
+#include <QDateTime>
 #include <memory>
 
 #include "common/config.h"
 #include "common/log.h"
-#include "common/net/channel_security.h"
+#include "common/security/key_store.h"
+#include "common/security/tls_channel.h"
 #include "server/business/login_handler.h"
 #include "server/net/tcp_server.h"
 #include "server/ui/main_window.h"
 
-#ifdef FWDS_DEV_PLAINTEXT
-#include "common/net/plaintext_dev_channel.h"
-#endif
-
-// 信道安全实现。TLS 层（TlsContext / CertVerifier）在开发 1 的下一步接入；
-// 在那之前，非开发构建返回空指针，程序不启动网络，避免以明文对外提供服务。
-static std::unique_ptr<fwds::ChannelSecurity> makeChannelSecurity() {
-#ifdef FWDS_DEV_PLAINTEXT
-  qCWarning(fwds::lcSecurity) << "DEV BUILD: plaintext channel in use, not for delivery";
-  return std::make_unique<fwds::PlaintextDevChannel>();
-#else
-  return nullptr;
-#endif
+// 建立 TLS 信道：私钥口令从环境变量取（取走即清除），证书和私钥文件的位置来自配置。
+// 任何一项缺失或不合格都返回空指针，程序不启动网络——没有“不加密也能跑”的路径。
+static std::unique_ptr<fwds::TlsChannelSecurity> makeChannelSecurity(const fwds::TlsConfig& tls,
+                                                                     QString* error) {
+  fwds::SecureBuffer passphrase;
+  if (!fwds::takePassphraseFromEnv(fwds::kKeyPassphraseEnv, &passphrase)) {
+    *error = QStringLiteral("没有设置环境变量 %1（服务端私钥口令）")
+                 .arg(QString::fromLatin1(fwds::kKeyPassphraseEnv));
+    return nullptr;
+  }
+  auto security = std::make_unique<fwds::TlsChannelSecurity>(
+      fwds::CertLimits{tls.maxCaCertDays, tls.maxCertDays});
+  if (!security->loadFiles(tls, passphrase, error)) return nullptr;
+  return security;
 }
 
 int main(int argc, char* argv[]) {
@@ -59,11 +63,18 @@ int main(int argc, char* argv[]) {
   }
   fwds::initLogging(config.logLevel);
 
-  const std::unique_ptr<fwds::ChannelSecurity> security = makeChannelSecurity();
+  const std::unique_ptr<fwds::TlsChannelSecurity> security =
+      makeChannelSecurity(config.tls, &error);
   if (!security) {
-    qCCritical(fwds::lcApp) << "TLS layer not implemented yet; configure with the 'dev' preset to "
-                               "use the plaintext development channel";
+    qCCritical(fwds::lcApp).noquote() << "TLS setup failed:" << error;
     return 3;
+  }
+  qCInfo(fwds::lcApp).noquote() << "TLS ready, server certificate" << security->localIdentity().name
+                                << "valid until"
+                                << security->localCertNotAfter().toString(Qt::ISODate);
+  // 证书轮换提醒（设计 11.4 节）：到期前 15 天开始告警
+  if (QDateTime::currentDateTimeUtc().daysTo(security->localCertNotAfter()) < 15) {
+    qCWarning(fwds::lcSecurity) << "server certificate expires within 15 days, issue a new one";
   }
 
   fwds::TcpServer server(config, security.get());

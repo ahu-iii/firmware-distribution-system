@@ -36,6 +36,13 @@ Session::Session(quint64 id, QSslSocket* socket, const ProtocolParams& params,
   });
   connect(socket_, &QAbstractSocket::errorOccurred, this, [this](QAbstractSocket::SocketError e) {
     if (e == QAbstractSocket::RemoteHostClosedError) return;  // 由 disconnected 处理
+    if (state_ == State::Handshake) {
+      // 握手阶段出错：对端没出示证书、证书不被信任、协议版本或套件不符等（协议 6.2 节末）
+      qCCritical(lcSecurity).noquote() << "session" << id_ << peerAddress_.toString()
+                                       << "TLS handshake failed:" << socket_->errorString();
+      close(QStringLiteral("TLS 握手失败"));
+      return;
+    }
     qCWarning(lcNet) << "session" << id_ << "socket error:" << socket_->errorString();
     close(QStringLiteral("网络错误"));
   });
@@ -45,21 +52,19 @@ void Session::start() {
   // 限时从 TCP 连接建立算起，覆盖 TLS 握手和登录两个阶段
   loginTimer_.start(params_.loginTimeoutMs);
 
-  if (security_->encrypted()) {
-    security_->prepare(socket_, true);
-    connect(socket_, &QSslSocket::encrypted, this, [this]() {
-      const QString reason = security_->verifyPeer(socket_, true);
-      if (!reason.isEmpty()) {
-        qCCritical(lcSecurity) << "session" << id_ << "peer certificate rejected:" << reason;
-        close(QStringLiteral("证书校验失败"));
-        return;
-      }
-      onChannelReady();
-    });
-    socket_->startServerEncryption();
-  } else {
+  // 先 TLS 握手；握手成功后还要过一遍补充校验（吊销、名称），都通过才开始收发 FWDS 帧
+  security_->prepare(socket_, true);
+  connect(socket_, &QSslSocket::encrypted, this, [this]() {
+    const QString reason = security_->verifyPeer(socket_, true, &peer_);
+    if (!reason.isEmpty()) {
+      qCCritical(lcSecurity).noquote() << "session" << id_ << peerAddress_.toString()
+                                       << "peer certificate rejected:" << reason;
+      close(QStringLiteral("证书校验失败"));
+      return;
+    }
     onChannelReady();
-  }
+  });
+  socket_->startServerEncryption();
 }
 
 void Session::onChannelReady() {

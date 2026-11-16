@@ -1,5 +1,6 @@
 // fwds-client：设备客户端入口。多开时每个实例用自己的配置文件模拟一台设备。
 // 用法：fwds-client --config <配置文件> [--headless]
+// 启动前须设置环境变量 FWDS_KEY_PASSPHRASE（设备私钥口令），程序读取后立即清除。
 #include <QApplication>
 #include <QCommandLineParser>
 #include <QCoreApplication>
@@ -11,21 +12,31 @@
 #include "client/ui/main_window.h"
 #include "common/config.h"
 #include "common/log.h"
-#include "common/net/channel_security.h"
+#include "common/security/key_store.h"
+#include "common/security/tls_channel.h"
 
-#ifdef FWDS_DEV_PLAINTEXT
-#include "common/net/plaintext_dev_channel.h"
-#endif
-
-// 信道安全实现。TLS 层（TlsContext / CertVerifier）在开发 1 的下一步接入；
-// 在那之前，非开发构建返回空指针，程序不发起连接，避免明文上线。
-static std::unique_ptr<fwds::ChannelSecurity> makeChannelSecurity() {
-#ifdef FWDS_DEV_PLAINTEXT
-  qCWarning(fwds::lcSecurity) << "DEV BUILD: plaintext channel in use, not for delivery";
-  return std::make_unique<fwds::PlaintextDevChannel>();
-#else
-  return nullptr;
-#endif
+// 建立 TLS 信道：私钥口令从环境变量取（取走即清除），证书和私钥文件的位置来自配置。
+// 任何一项缺失或不合格都返回空指针，程序不发起连接——没有“不加密也能跑”的路径。
+static std::unique_ptr<fwds::TlsChannelSecurity> makeChannelSecurity(
+    const fwds::ClientConfig& config, QString* error) {
+  fwds::SecureBuffer passphrase;
+  if (!fwds::takePassphraseFromEnv(fwds::kKeyPassphraseEnv, &passphrase)) {
+    *error = QStringLiteral("没有设置环境变量 %1（设备私钥口令）")
+                 .arg(QString::fromLatin1(fwds::kKeyPassphraseEnv));
+    return nullptr;
+  }
+  auto security = std::make_unique<fwds::TlsChannelSecurity>(
+      fwds::CertLimits{config.tls.maxCaCertDays, config.tls.maxCertDays});
+  if (!security->loadFiles(config.tls, passphrase, error)) return nullptr;
+  // 服务端证书的名称必须等于这里配置的主机名或 IP
+  security->setExpectedServerName(config.serverHost);
+  // 设备证书是给哪台设备签的，就只能由哪台设备用
+  if (security->localIdentity().name != config.deviceId) {
+    *error = QStringLiteral("设备证书名称 %1 与配置的 device_id %2 不一致")
+                 .arg(security->localIdentity().name, config.deviceId);
+    return nullptr;
+  }
+  return security;
 }
 
 int main(int argc, char* argv[]) {
@@ -59,11 +70,13 @@ int main(int argc, char* argv[]) {
   }
   fwds::initLogging(config.logLevel);
 
-  const std::unique_ptr<fwds::ChannelSecurity> security = makeChannelSecurity();
+  const std::unique_ptr<fwds::TlsChannelSecurity> security = makeChannelSecurity(config, &error);
   if (!security) {
-    qCCritical(fwds::lcApp) << "TLS layer not implemented yet; configure with the 'dev' preset to "
-                               "use the plaintext development channel";
+    qCCritical(fwds::lcApp).noquote() << "TLS setup failed:" << error;
     return 3;
+  }
+  if (QDateTime::currentDateTimeUtc().daysTo(security->localCertNotAfter()) < 15) {
+    qCWarning(fwds::lcSecurity) << "device certificate expires within 15 days, issue a new one";
   }
 
   fwds::TcpClient client(config, security.get());

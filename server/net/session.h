@@ -10,13 +10,12 @@
 #include <QTimer>
 
 #include "common/config.h"
+#include "common/net/channel_security.h"
 #include "common/net/frame_channel.h"
 
 class QSslSocket;
 
 namespace fwds {
-
-class ChannelSecurity;
 
 class Session : public QObject {
   Q_OBJECT
@@ -57,6 +56,8 @@ class Session : public QObject {
   QHostAddress peerAddress() const { return peerAddress_; }
   quint16 peerPort() const { return peerPort_; }
   QString deviceId() const { return deviceId_; }
+  // 对端证书里的身份（握手和补充校验通过后有效）。登录处理用它核对 LOGIN 里的设备 ID。
+  const PeerIdentity& peerIdentity() const { return peer_; }
   QDateTime lastHeartbeat() const { return lastHeartbeat_; }
 
  signals:
@@ -86,6 +87,7 @@ class Session : public QObject {
   QHostAddress peerAddress_;
   quint16 peerPort_ = 0;
   QString deviceId_;
+  PeerIdentity peer_;
   qint64 eventAck_ = 0;
   QDateTime lastHeartbeat_;
   bool loginPending_ = false;  // 已把 LOGIN 交给业务层，还没裁决
