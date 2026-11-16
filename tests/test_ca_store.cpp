@@ -238,4 +238,10 @@ TEST(CertNames, Validation) {
   EXPECT_FALSE(isValidCertName(CertType::Server, QStringLiteral("-bad.example")));
   EXPECT_FALSE(isValidCertName(CertType::Server, QStringLiteral("a..b")));
   EXPECT_FALSE(isValidCertName(CertType::Server, QStringLiteral("host name")));
+  // 末尾带换行符的名称不能通过（正则里 $ 在末尾换行符之前也能匹配，所以用 \z）
+  EXPECT_FALSE(isValidCertName(CertType::Device, QStringLiteral("DEV-001\n")));
+  EXPECT_FALSE(isValidCertName(CertType::Device, QStringLiteral("\nDEV-001")));
+  EXPECT_FALSE(isValidCertName(CertType::Server, QStringLiteral("fwds-server.plant.example\n")));
+  EXPECT_FALSE(isValidCertName(CertType::Server, QStringLiteral("127.0.0.1\n")));
+  EXPECT_FALSE(isValidCertName(CertType::Server, QStringLiteral(" 127.0.0.1")));
 }
