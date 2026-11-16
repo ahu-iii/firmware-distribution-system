@@ -28,7 +28,7 @@ void TcpServer::incomingConnection(qintptr socketDescriptor) {
     return;
   }
 
-  // 超过连接上限直接断开（2008）。这里不做握手也不发 ERROR 帧：
+  // 超过连接上限直接断开（2008，协议 5.8、6.2 节）。这里不做握手也不发 ERROR 帧：
   // 限制的目的就是不让多余的连接消耗握手资源。
   const QHostAddress peer = socket->peerAddress();
   if (!limiter_.tryAcquire(peer)) {
