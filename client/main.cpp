@@ -1,6 +1,8 @@
 // fwds-client：设备客户端入口。多开时每个实例用自己的配置文件模拟一台设备。
 // 用法：fwds-client --config <配置文件> [--headless]
+//       fwds-client --config <配置文件> --provision <固件包.fwpkg>   出厂写入第一份固件后退出
 // 启动前须设置环境变量 FWDS_KEY_PASSPHRASE（设备私钥口令），程序读取后立即清除。
+// 启动顺序：读配置 → 装入固件签名公钥（核对指纹）→ 建立 TLS 材料 → Bootloader 选分区 → 连接服务端。
 #include <QApplication>
 #include <QCommandLineParser>
 #include <QCoreApplication>
@@ -8,7 +10,10 @@
 #include <QElapsedTimer>
 #include <memory>
 
+#include "client/business/provisioner.h"
+#include "client/business/updater.h"
 #include "client/net/tcp_client.h"
+#include "client/security/fsk_public_key.h"
 #include "client/ui/main_window.h"
 #include "common/config.h"
 #include "common/log.h"
@@ -57,8 +62,12 @@ int main(int argc, char* argv[]) {
   const QCommandLineOption configOpt(QStringLiteral("config"), QStringLiteral("配置文件路径（必填）"),
                                      QStringLiteral("file"));
   const QCommandLineOption headlessOpt(QStringLiteral("headless"), QStringLiteral("不显示界面"));
+  const QCommandLineOption provisionOpt(
+      QStringLiteral("provision"),
+      QStringLiteral("出厂写入：把这个 .fwpkg 装进空设备的分区 a，然后退出"), QStringLiteral("fwpkg"));
   parser.addOption(configOpt);
   parser.addOption(headlessOpt);
+  parser.addOption(provisionOpt);
   parser.process(*app);
 
   fwds::initLogging(QStringLiteral("INFO"));
@@ -69,6 +78,24 @@ int main(int argc, char* argv[]) {
     return 2;
   }
   fwds::initLogging(config.logLevel);
+
+  // 固件签名公钥：设备只装这把公钥对应的私钥签过的固件。指纹对不上就不运行
+  fwds::ManifestVerifier fskVerifier;
+  if (!fwds::loadPinnedFskPublicKey(config.fskPubFile, config.fskPubSha256, &fskVerifier, &error)) {
+    qCCritical(fwds::lcSecurity).noquote() << error;
+    return 4;
+  }
+
+  // 出厂写入模式：不联网，装好第一份固件就退出
+  if (parser.isSet(provisionOpt)) {
+    if (!fwds::provisionDevice(config.dataDir, parser.value(provisionOpt), fskVerifier, config.model,
+                               &error)) {
+      qCCritical(fwds::lcApp).noquote() << "provision failed:" << error;
+      return 5;
+    }
+    qCInfo(fwds::lcApp).noquote() << "factory firmware installed in" << config.dataDir;
+    return 0;
+  }
 
   const std::unique_ptr<fwds::TlsChannelSecurity> security = makeChannelSecurity(config, &error);
   if (!security) {
@@ -83,29 +110,54 @@ int main(int argc, char* argv[]) {
   QElapsedTimer uptime;
   uptime.start();
 
-  // LOGIN 和 HEARTBEAT 的内容以后由 Updater / Bootloader 提供真实的版本、分区和升级状态；
-  // 目前只填网络层联调需要的字段。
-  client.setLoginProvider([&config]() {
-    QJsonObject login;
+  // 升级状态机。它要发的帧（CHUNK_REQ 等）交给网络层；网络层收到的业务帧和连接状态交给它
+  fwds::Updater updater(config, fskVerifier, [&client](fwds::MsgType type, const QByteArray& body) {
+    return client.send(type, body);
+  });
+  QObject::connect(&client, &fwds::TcpClient::frameReceived, &updater, &fwds::Updater::handleFrame);
+  QObject::connect(&client, &fwds::TcpClient::stateChanged, &updater,
+                   [&updater](fwds::TcpClient::State state) {
+                     updater.setOnline(state == fwds::TcpClient::State::Online);
+                   });
+  // 模拟重启：先说 BYE 断开连接，Bootloader 跑完后重新连接、重新登录（带上新的版本号）
+  QObject::connect(&updater, &fwds::Updater::rebootRequested, &client,
+                   [&client]() { client.stop(QStringLiteral("reboot")); });
+  QObject::connect(&updater, &fwds::Updater::rebootFinished, &client, [&client]() { client.start(); });
+  // 升级结果和安全告警目前写本地日志并显示在界面上；作为事件落盘、上报（RESULT / ALERT）
+  // 由 EventOutbox 在“事件补传对账”那一步接入
+  QObject::connect(&updater, &fwds::Updater::finished, &updater,
+                   [](const QString& result, int code, const QString& detail) {
+                     qCInfo(fwds::lcApp).noquote() << "update result:" << result << code << detail;
+                   });
+
+  // LOGIN 带上当前运行的固件版本、安全版本号和活动分区；HEARTBEAT 带上升级状态和进度
+  client.setLoginProvider([&config, &updater]() {
+    QJsonObject login = updater.loginFields();
     login.insert(QStringLiteral("device_id"), config.deviceId);
     login.insert(QStringLiteral("model"), config.model);
     login.insert(QStringLiteral("ts"), QDateTime::currentMSecsSinceEpoch());
     return login;
   });
-  client.setHeartbeatProvider([&uptime]() {
+  client.setHeartbeatProvider([&uptime, &updater]() {
     QJsonObject hb;
-    hb.insert(QStringLiteral("state"), QStringLiteral("IDLE"));
-    hb.insert(QStringLiteral("progress"), 0);
+    hb.insert(QStringLiteral("state"), updater.stateName());
+    hb.insert(QStringLiteral("progress"), updater.progress());
     hb.insert(QStringLiteral("uptime"), uptime.elapsed() / 1000);
     return hb;
   });
 
   std::unique_ptr<fwds::MainWindow> window;
   if (!headless) {
-    window = std::make_unique<fwds::MainWindow>(config, &client);
+    window = std::make_unique<fwds::MainWindow>(config, &client, &updater);
     window->show();
   }
   QObject::connect(app.get(), &QCoreApplication::aboutToQuit, &client, [&client]() { client.stop(); });
+
+  // 上电：Bootloader 验签并选定运行的分区，然后才联网
+  updater.powerOn();
+  if (!updater.bootState().hasFirmware) {
+    qCCritical(fwds::lcApp) << "no bootable firmware, recovery mode: waiting for the server to push one";
+  }
   client.start();
   return app->exec();
 }

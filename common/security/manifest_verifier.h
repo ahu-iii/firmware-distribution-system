@@ -11,6 +11,7 @@
 #include <QString>
 
 #include "common/crypto/openssl_util.h"
+#include "common/crypto/sha256.h"
 #include "common/manifest.h"
 
 namespace fwds {
@@ -43,8 +44,37 @@ class ManifestVerifier {
 // manifest 必须是 verify() 返回 Ok 得到的。
 bool chunkMatches(const Manifest& manifest, int index, const QByteArray& data);
 
-// 从 image 的当前位置顺序读出整个镜像，逐片核对分片哈希，最后核对整镜像哈希。
-// 读到的字节数少于 image_size 也算失败。每次只读一片，不把镜像整个放进内存。
+// 分段核对整镜像时每一段查多少片：16 片约 1 MB。
+inline constexpr int kImageCheckStepChunks = 16;
+
+// 整镜像核对，分段进行：从 image 的当前位置顺序读，逐片核对分片哈希，同时累计整镜像哈希，
+// 读完最后一片再核对整镜像哈希。读到的字节数少于 image_size 也算失败。
+// 每次只读一片，不把镜像整个放进内存；每次 step() 只查几片，调用方可以在两次之间回到事件循环
+// （设备端升级时界面不卡）。image 和 manifest 必须比本对象活得久。
+class ImageCheck {
+ public:
+  enum class Step {
+    More,    // 还没查完，继续调用 step()
+    Passed,  // 全部分片和整镜像哈希都与 manifest 一致
+    Failed,  // 有不一致，error 里是原因
+  };
+
+  ImageCheck(QIODevice* image, const Manifest& manifest);
+
+  // 再核对最多 maxChunks 片。返回 Passed 或 Failed 之后不要再调用。
+  Step step(int maxChunks, QString* error);
+
+  // 已经核对通过的片数（算进度用）。
+  int checkedChunks() const { return next_; }
+
+ private:
+  QIODevice* image_;
+  const Manifest& manifest_;
+  Sha256 whole_;  // 整镜像哈希，和分片哈希同时算，镜像只读一遍
+  int next_ = 0;  // 下一个要核对的分片
+};
+
+// 一口气核对完整个镜像（ImageCheck 循环到底）。服务端导入固件、Bootloader 启动检查用。
 bool verifyImage(QIODevice* image, const Manifest& manifest, QString* error);
 
 }  // namespace fwds

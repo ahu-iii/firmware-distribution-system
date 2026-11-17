@@ -5,32 +5,12 @@
 #include <QJsonObject>
 #include <QSaveFile>
 
-#ifdef Q_OS_WIN
-#include <io.h>
-#else
-#include <unistd.h>
-#endif
-
+#include "client/storage/file_sync.h"
 #include "common/crypto/sha256.h"
 #include "common/log.h"
 #include "common/security/manifest_verifier.h"
 
 namespace fwds {
-
-namespace {
-
-// 让操作系统把这个文件已写入的数据真正写到磁盘上。
-// QFile::flush() 只是把 Qt 自己的缓冲交给操作系统，数据可能还在系统缓存里，断电会丢。
-bool syncToDisk(QFile* file) {
-  if (!file->flush()) return false;
-#ifdef Q_OS_WIN
-  return _commit(file->handle()) == 0;
-#else
-  return fsync(file->handle()) == 0;
-#endif
-}
-
-}  // namespace
 
 ResumeStore::ResumeStore(const QString& downloadDir, int saveEveryChunks)
     : dir_(downloadDir), saveEveryChunks_(qMax(1, saveEveryChunks)) {}

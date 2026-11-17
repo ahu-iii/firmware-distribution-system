@@ -100,6 +100,8 @@ void Downloader::onUpdateNotify(const QByteArray& body) {
     return;
   }
   manifest_ = manifest;
+  manifestRaw_ = notify.manifestRaw;
+  signature_ = notify.signature;
   mismatches_.clear();
   lastPercent_ = -1;
   setState(State::Notified);

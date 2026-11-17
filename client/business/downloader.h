@@ -53,6 +53,9 @@ class Downloader : public QObject {
   int progress() const;
   // 当前（或最近一次）下载的固件的 manifest，已验签。
   const Manifest& manifest() const { return manifest_; }
+  // 这份 manifest 的原始字节和签名（通知里带来的）。写入分区时原样保存，Bootloader 启动时再验。
+  const QByteArray& manifestRaw() const { return manifestRaw_; }
+  const QByteArray& signature() const { return signature_; }
 
  signals:
   void stateChanged(fwds::Downloader::State state);
@@ -92,6 +95,8 @@ class Downloader : public QObject {
   // 断线之后为 true：要等服务端重新发来 UPDATE_NOTIFY 才继续（协议第 9 节）。
   bool awaitingNotify_ = false;
   Manifest manifest_;
+  QByteArray manifestRaw_;
+  QByteArray signature_;
 
   QTimer recheckTimer_;  // 间隔为 0：每回到事件循环一次，校验一小段断点
   int recheckNext_ = 0;  // 下一段从哪一片开始校验
