@@ -40,7 +40,13 @@ struct ServerConfig {
   quint16 listenPort = 0;
   int maxConnections = 200;
   int maxConnectionsPerIp = 5;
-  QString dbFile;  // SQLite 数据库文件（设备注册表、账号表）
+  QString dbFile;  // SQLite 数据库文件（设备注册表、账号表、固件表、发布表）
+  // 固件库目录：导入的 .fwpkg 检查通过后以“包 ID.fwpkg”为名存放在这里，下发时从这里读分片。
+  QString firmwareDir;
+  // 固件签名公钥（FSK 公钥，PEM）和它的指纹，含义与 ClientConfig 里的同名项相同：
+  // 服务端导入固件时用这把公钥验签，指纹对不上就不启动。
+  QString fskPubFile;
+  QString fskPubSha256;
   // 设备登录失败锁定（设计第 14 节）：windowS 秒内失败 limit 次，锁定 lockS 秒
   int loginFailLimit = 5;
   int loginFailWindowS = 300;

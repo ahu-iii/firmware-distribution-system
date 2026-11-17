@@ -1,5 +1,7 @@
 #include "server/business/admin_service.h"
 
+#include <QFileInfo>
+
 #include "common/crypto/x509_util.h"
 #include "common/log.h"
 
@@ -209,6 +211,49 @@ bool AdminService::setDeviceGroup(const QString& deviceId, const QString& groupT
   }
   const bool ok = registry_->setGroup(deviceId, tag, error);
   audit("set_device_group", deviceId, ok, QStringLiteral("group=") + tag);
+  return ok;
+}
+
+// ---------- 固件库 ----------
+
+bool AdminService::importFirmware(const QString& path, QString* error) {
+  // 日志里只记文件名，不记完整路径（路径里可能带着操作人员的用户名、目录结构）
+  const QString fileName = QFileInfo(path).fileName().left(64);
+  if (!authorize(Permission::ImportFirmware, "import_firmware", fileName, error)) return false;
+  if (!firmware_) {
+    *error = QStringLiteral("固件库不可用");
+    return false;
+  }
+  StoredPackage package;
+  const PackageCheck check = firmware_->import(path, current_.username, &package, error);
+  if (check != PackageCheck::Ok) {
+    audit("import_firmware", fileName, false, *error);
+    return false;
+  }
+  // 哈希不是秘密，记下前 16 位方便事后核对入库的是哪一份镜像
+  const Manifest& m = package.manifest;
+  audit("import_firmware", m.pkgId, true,
+        QStringLiteral("model=%1 version=%2 security_version=%3 sha256=%4…")
+            .arg(m.deviceModel, m.version)
+            .arg(m.securityVersion)
+            .arg(QString::fromLatin1(m.imageSha256.toHex().left(16))));
+  return true;
+}
+
+// ---------- 下发 ----------
+
+bool AdminService::dispatchFirmware(const QString& pkgId, const QString& deviceId,
+                                    QString* error) {
+  if (!authorize(Permission::ManageRelease, "dispatch", deviceId, error)) return false;
+  if (!rollout_) {
+    *error = QStringLiteral("发布模块不可用");
+    return false;
+  }
+  qint64 releaseId = 0;
+  const bool ok = rollout_->dispatchToDevice(pkgId, deviceId, current_.username, &releaseId, error);
+  audit("dispatch", deviceId, ok,
+        ok ? QStringLiteral("release=%1 pkg=%2").arg(releaseId).arg(pkgId)
+           : QStringLiteral("pkg=%1 reason=%2").arg(pkgId.left(36), *error));
   return ok;
 }
 

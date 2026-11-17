@@ -5,6 +5,7 @@
 //   3. 按 CHUNK_REQ 从 .fwpkg 里读出分片，用 CHUNK_DATA 发回去。
 // 服务端从不主动推送分片：设备要一个窗口，这里才发一个窗口（拉取式流控）。
 // 给哪些设备下发、什么时候下发由发布模块（RolloutManager）决定，它调用这里的 assign / cancel。
+// 下发记录只在内存里，服务端重启后清空；RolloutManager 启动时会把没做完的发布改成“已暂停”。
 #pragma once
 
 #include <QHash>

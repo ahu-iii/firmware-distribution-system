@@ -13,7 +13,7 @@
 #include "client/business/provisioner.h"
 #include "client/business/updater.h"
 #include "client/net/tcp_client.h"
-#include "client/security/fsk_public_key.h"
+#include "common/security/fsk_public_key.h"
 #include "client/ui/main_window.h"
 #include "common/config.h"
 #include "common/log.h"

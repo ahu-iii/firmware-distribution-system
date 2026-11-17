@@ -114,6 +114,18 @@ bool readTls(const QSettings& s, const QString& section, TlsConfig* tls, QString
          readCertDayLimits(s, tls, error);
 }
 
+// 固件签名公钥的指纹：SHA-256 的十六进制写法，统一成小写，必须正好 64 个十六进制字符。
+bool readFingerprint(const QSettings& s, const QString& key, QString* value, QString* error) {
+  if (!readRequiredString(s, key, value, error)) return false;
+  *value = value->toLower();
+  static const QRegularExpression kFingerprint(QStringLiteral("\\A[0-9a-f]{64}\\z"));
+  if (!kFingerprint.match(*value).hasMatch()) {
+    *error = QStringLiteral("配置项 %1 必须是 64 个十六进制字符").arg(key);
+    return false;
+  }
+  return true;
+}
+
 bool openSettings(const QString& path, QString* error) {
   const QFileInfo info(path);
   if (path.isEmpty() || !info.isFile() || !info.isReadable()) {
@@ -142,7 +154,12 @@ bool loadServerConfig(const QString& path, ServerConfig* out, QString* error) {
                &cfg.maxConnectionsPerIp, error)) {
     return false;
   }
-  if (!readRequiredString(s, QStringLiteral("server/db_file"), &cfg.dbFile, error)) return false;
+  if (!readRequiredString(s, QStringLiteral("server/db_file"), &cfg.dbFile, error) ||
+      !readRequiredString(s, QStringLiteral("server/firmware_dir"), &cfg.firmwareDir, error) ||
+      !readRequiredString(s, QStringLiteral("server/fsk_pub_file"), &cfg.fskPubFile, error) ||
+      !readFingerprint(s, QStringLiteral("server/fsk_pub_sha256"), &cfg.fskPubSha256, error)) {
+    return false;
+  }
   if (!readInt(s, QStringLiteral("server/login_fail_limit"), 1, 1000, &cfg.loginFailLimit, error) ||
       !readInt(s, QStringLiteral("server/login_fail_window_s"), 1, 86400, &cfg.loginFailWindowS, error) ||
       !readInt(s, QStringLiteral("server/login_lock_s"), 1, 86400, &cfg.loginLockS, error)) {
@@ -167,15 +184,8 @@ bool loadClientConfig(const QString& path, ClientConfig* out, QString* error) {
       !readRequiredString(s, QStringLiteral("client/model"), &cfg.model, error) ||
       !readRequiredString(s, QStringLiteral("client/data_dir"), &cfg.dataDir, error) ||
       !readRequiredString(s, QStringLiteral("client/fsk_pub_file"), &cfg.fskPubFile, error) ||
-      !readRequiredString(s, QStringLiteral("client/fsk_pub_sha256"), &cfg.fskPubSha256, error) ||
+      !readFingerprint(s, QStringLiteral("client/fsk_pub_sha256"), &cfg.fskPubSha256, error) ||
       !readInt(s, QStringLiteral("client/reboot_delay_ms"), 0, 60000, &cfg.rebootDelayMs, error)) {
-    return false;
-  }
-  // 指纹是 SHA-256 的十六进制写法，统一成小写再比较
-  cfg.fskPubSha256 = cfg.fskPubSha256.toLower();
-  static const QRegularExpression kFingerprint(QStringLiteral("\\A[0-9a-f]{64}\\z"));
-  if (!kFingerprint.match(cfg.fskPubSha256).hasMatch()) {
-    *error = QStringLiteral("配置项 client/fsk_pub_sha256 必须是 64 个十六进制字符");
     return false;
   }
   cfg.logLevel = s.value(QStringLiteral("log/level"), cfg.logLevel).toString().trimmed().toUpper();

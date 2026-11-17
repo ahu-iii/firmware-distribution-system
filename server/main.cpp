@@ -10,6 +10,7 @@
 
 #include "common/config.h"
 #include "common/log.h"
+#include "common/security/fsk_public_key.h"
 #include "common/security/key_store.h"
 #include "common/security/tls_channel.h"
 #include "server/business/admin_service.h"
@@ -19,6 +20,7 @@
 #include "server/business/heartbeat_monitor.h"
 #include "server/business/login_handler.h"
 #include "server/business/login_throttle.h"
+#include "server/business/rollout_manager.h"
 #include "server/net/tcp_server.h"
 #include "server/security/operator_auth.h"
 #include "server/storage/database.h"
@@ -86,7 +88,14 @@ int main(int argc, char* argv[]) {
     qCWarning(fwds::lcSecurity) << "server certificate expires within 15 days, issue a new one";
   }
 
-  // 存储层：数据库（设备注册表、账号表）
+  // 固件签名公钥：服务端只让这把公钥验得过的固件包进固件库。指纹和配置对不上就不启动
+  fwds::ManifestVerifier fskVerifier;
+  if (!fwds::loadPinnedFskPublicKey(config.fskPubFile, config.fskPubSha256, &fskVerifier, &error)) {
+    qCCritical(fwds::lcSecurity).noquote() << error;
+    return 5;
+  }
+
+  // 存储层：数据库（设备注册表、账号表、固件表、发布表）
   fwds::Database database;
   if (!database.open(config.dbFile, &error)) {
     qCCritical(fwds::lcApp).noquote() << error;
@@ -113,9 +122,22 @@ int main(int argc, char* argv[]) {
   qCWarning(fwds::lcApp) << "license check is not available in this build, LOGIN skips it";
   fwds::LoginHandler loginHandler(config.protocol, &registry, &loginThrottle, licenseVerifier);
   fwds::HeartbeatMonitor heartbeatMonitor(&server, &registry);
-  // 分片服务：应答设备的 CHUNK_REQ。给哪台设备下发哪个包由发布模块决定（灰度发布一步接入），
-  // 在那之前没有任何下发记录，所有 CHUNK_REQ 都得到 3009
+  // 固件库：启动时把库里的每个包重新检查一遍（验签、逐片哈希、整镜像哈希）
+  fwds::FirmwareRepo firmwareRepo(&database, fskVerifier, config.firmwareDir);
+  if (!firmwareRepo.load(&error)) {
+    qCCritical(fwds::lcApp).noquote() << error;
+    return 4;
+  }
+  // 分片服务应答设备的 CHUNK_REQ；给哪台设备下发哪个包由发布模块裁决（开关、互锁）后交给它
   fwds::ChunkService chunkService(&server, config.protocol);
+  fwds::RolloutManager rollout(&database, config.protocol, &registry, &firmwareRepo, &chunkService,
+                               &dispatchGate);
+  if (!rollout.load(&error)) {
+    qCCritical(fwds::lcApp).noquote() << error;
+    return 4;
+  }
+  admin.setFirmwareRepo(&firmwareRepo);
+  admin.setRolloutManager(&rollout);
   QObject::connect(&server, &fwds::TcpServer::sessionOpened, &loginHandler,
                    [&loginHandler](fwds::Session* session) {
                      QObject::connect(session, &fwds::Session::loginRequested, &loginHandler,
@@ -127,7 +149,8 @@ int main(int argc, char* argv[]) {
   // 无界面模式下没有人登录，只做监控，不能执行任何管理操作。
   std::unique_ptr<fwds::MainWindow> window;
   if (!headless) {
-    window = std::make_unique<fwds::MainWindow>(&server, &registry, &admin, &dispatchGate);
+    window = std::make_unique<fwds::MainWindow>(&server, &registry, &admin, &dispatchGate,
+                                                &firmwareRepo, &rollout);
     window->show();
     QTimer::singleShot(0, window.get(), &fwds::MainWindow::promptLogin);
   }

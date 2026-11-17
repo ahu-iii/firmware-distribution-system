@@ -42,6 +42,8 @@ add_executable(fwds-tests
   test_anti_rollback.cpp
   test_bootloader.cpp
   test_updater.cpp
+  test_firmware_repo.cpp
+  test_dispatch.cpp
 )
 target_link_libraries(fwds-tests PRIVATE fwds_server_lib fwds_client_lib fwds_signer_lib GTest::gtest)
 

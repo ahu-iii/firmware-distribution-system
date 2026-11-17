@@ -12,7 +12,7 @@ namespace fwds {
 namespace {
 
 // 建表语句，字段与设计 5.1 节的 ER 图一致。时间一律存 UTC 的 ISO 8601 文本。
-// 固件、发布、事件、审计几张表在对应模块实现时加入。
+// 事件、审计两张表在对应模块实现时加入。
 const char* const kSchema[] = {
     // 账号表：不存口令，只存派生函数名、迭代次数、盐和派生结果（设计 11.2 节）
     "CREATE TABLE IF NOT EXISTS operator ("
@@ -39,6 +39,42 @@ const char* const kSchema[] = {
     "  online_state     TEXT NOT NULL DEFAULT 'offline',"
     "  last_heartbeat   TEXT,"
     "  event_ack        INTEGER NOT NULL DEFAULT 0"
+    ")",
+    // 固件表：只登记通过了整包检查的固件包。file_path 是固件库目录下的文件名（包 ID.fwpkg）
+    "CREATE TABLE IF NOT EXISTS firmware ("
+    "  pkg_id           TEXT PRIMARY KEY,"
+    "  model            TEXT NOT NULL,"
+    "  version          TEXT NOT NULL,"
+    "  security_version INTEGER NOT NULL,"
+    "  image_size       INTEGER NOT NULL,"
+    "  image_sha256     TEXT NOT NULL,"
+    "  file_path        TEXT NOT NULL,"
+    "  imported_by      TEXT NOT NULL,"
+    "  imported_at      TEXT NOT NULL"
+    ")",
+    // 发布表：一次发布 = 把一个固件包推给一批设备。state 的取值就是设计 4.2 节状态机的各个状态。
+    // release 是 SQL 关键字，表名加双引号
+    "CREATE TABLE IF NOT EXISTS \"release\" ("
+    "  release_id   INTEGER PRIMARY KEY AUTOINCREMENT,"
+    "  pkg_id       TEXT NOT NULL REFERENCES firmware(pkg_id),"
+    "  state        TEXT NOT NULL CHECK (state IN ('draft','canary','observing','awaiting_full',"
+    "                                              'full','paused','done','aborted')),"
+    "  canary_group TEXT NOT NULL DEFAULT '',"
+    "  concurrency  INTEGER NOT NULL DEFAULT 5,"
+    "  created_by   TEXT NOT NULL,"
+    "  created_at   TEXT NOT NULL"
+    ")",
+    // 发布目标表：发布里的每台设备一行。phase 是它属于灰度批还是全量批，status 是它自己的结果
+    "CREATE TABLE IF NOT EXISTS release_target ("
+    "  release_id INTEGER NOT NULL REFERENCES \"release\"(release_id),"
+    "  device_id  TEXT NOT NULL REFERENCES device(device_id),"
+    "  phase      TEXT NOT NULL CHECK (phase IN ('canary','full')),"
+    "  status     TEXT NOT NULL CHECK (status IN ('pending','notified','success','failed',"
+    "                                             'rolled_back','cancelled')),"
+    "  progress   INTEGER NOT NULL DEFAULT 0,"
+    "  last_error TEXT NOT NULL DEFAULT '',"
+    "  updated_at TEXT NOT NULL,"
+    "  PRIMARY KEY (release_id, device_id)"
     ")",
 };
 
@@ -73,9 +109,11 @@ bool Database::open(const QString& path, QString* error) {
   if (!inMemory) {
     QFile::setPermissions(path, QFileDevice::ReadOwner | QFileDevice::WriteOwner);
   }
-  // synchronous=FULL：每次提交都刷盘，断电不丢已提交的数据
+  // synchronous=FULL：每次提交都刷盘，断电不丢已提交的数据；
+  // foreign_keys=ON：让表之间的 REFERENCES 约束生效（SQLite 默认不检查外键）
   QSqlQuery pragma(db);
-  if (!pragma.exec(QStringLiteral("PRAGMA synchronous=FULL"))) {
+  if (!pragma.exec(QStringLiteral("PRAGMA synchronous=FULL")) ||
+      !pragma.exec(QStringLiteral("PRAGMA foreign_keys=ON"))) {
     *error = QStringLiteral("数据库初始化失败：%1").arg(pragma.lastError().text());
     return false;
   }

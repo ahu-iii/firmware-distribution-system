@@ -1,6 +1,7 @@
 // Database：服务端的 SQLite 数据库（设计 5.1 节），通过 Qt SQL 访问。
 // 这里只负责打开文件和建表；每张表的读写在各自的模块里
-// （设备表 → DeviceRegistry，账号表 → OperatorAuth），SQL 一律用占位符绑定参数，不拼字符串。
+// （设备表 → DeviceRegistry，账号表 → OperatorAuth，固件表 → FirmwareRepo，
+// 发布表和发布目标表 → RolloutManager），SQL 一律用占位符绑定参数，不拼字符串。
 // 数据库文件的位置来自配置 [server] db_file；*.db 已列入 .gitignore，不进仓库。
 #pragma once
 

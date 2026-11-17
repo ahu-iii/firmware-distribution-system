@@ -42,6 +42,8 @@ add_library(fwds_common STATIC
   security/cert_verifier.cpp
   security/manifest_verifier.h
   security/manifest_verifier.cpp
+  security/fsk_public_key.h
+  security/fsk_public_key.cpp
   security/key_store.h
   security/key_store.cpp
   security/tls_channel.h

@@ -4,6 +4,7 @@
 
 #include <QDir>
 #include <QFile>
+#include <gtest/gtest.h>
 
 #include "client/storage/boot_config.h"
 #include "client/storage/slot_store.h"
@@ -72,6 +73,24 @@ struct DeviceFirmware {
   QByteArray raw;
   QByteArray signature;
 };
+
+// 把一份 DeviceFirmware 的镜像交给签发工具的打包函数，在 dir 里生成一个 .fwpkg，返回它的路径。
+// 包里的 manifest 是打包函数新生成的（包 ID 和 fw 里的不同），通过 *manifest 取回。
+inline QString packageFileFor(const DeviceFirmware& fw, const QString& dir, const QString& name,
+                              fwds::Manifest* manifest) {
+  const QString imagePath = QDir(dir).filePath(name + QStringLiteral(".bin"));
+  writeFile(imagePath, fw.image);
+  fwds::FirmwareInfo info;
+  info.deviceModel = fw.manifest.deviceModel;
+  info.version = fw.manifest.version;
+  info.securityVersion = fw.manifest.securityVersion;
+  info.releaseNote = QStringLiteral("unit test firmware");
+  const QString packagePath = QDir(dir).filePath(name + QStringLiteral(".fwpkg"));
+  QString error;
+  EXPECT_TRUE(fwds::signFirmware(imagePath, info, sharedFsk().key.get(), packagePath, manifest, &error))
+      << error.toStdString();
+  return packagePath;
+}
 
 inline void writeBootConfig(const QString& deviceDir, const QString& active, const QString& pending,
                             int attempts, int minSecurityVersion) {

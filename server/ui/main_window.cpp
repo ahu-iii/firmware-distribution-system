@@ -13,12 +13,14 @@
 #include "server/net/tcp_server.h"
 #include "server/ui/account_page.h"
 #include "server/ui/device_page.h"
+#include "server/ui/firmware_page.h"
 #include "server/ui/login_dialog.h"
 
 namespace fwds {
 
 MainWindow::MainWindow(TcpServer* server, DeviceRegistry* registry, AdminService* admin,
-                       DispatchGate* gate, QWidget* parent)
+                       DispatchGate* gate, FirmwareRepo* firmware, RolloutManager* rollout,
+                       QWidget* parent)
     : QMainWindow(parent), server_(server), registry_(registry), admin_(admin), gate_(gate) {
   setWindowTitle(QStringLiteral("固件分发服务端"));
   resize(1180, 640);
@@ -43,7 +45,9 @@ MainWindow::MainWindow(TcpServer* server, DeviceRegistry* registry, AdminService
   tabs_ = new QTabWidget(this);
   devicePage_ = new DevicePage(registry_, admin_, this);
   accountPage_ = new AccountPage(admin_, this);
+  firmwarePage_ = new FirmwarePage(firmware, rollout, registry_, admin_, this);
   tabs_->addTab(devicePage_, QStringLiteral("设备监控"));
+  tabs_->addTab(firmwarePage_, QStringLiteral("固件库"));
 
   auto* mainPage = new QWidget(this);
   auto* mainLayout = new QVBoxLayout(mainPage);
@@ -121,6 +125,7 @@ void MainWindow::applySession() {
   // 按角色显示功能入口（第一道权限检查；第二道在 AdminService 里）
   dispatchBox_->setEnabled(admin_->can(Permission::ToggleDispatch));
   devicePage_->applyPermissions();
+  firmwarePage_->applyPermissions();
   const int accountTab = tabs_->indexOf(accountPage_);
   if (admin_->can(Permission::ManageAccounts)) {
     if (accountTab < 0) tabs_->addTab(accountPage_, QStringLiteral("账号管理"));

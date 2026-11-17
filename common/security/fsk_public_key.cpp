@@ -1,4 +1,4 @@
-#include "client/security/fsk_public_key.h"
+#include "common/security/fsk_public_key.h"
 
 #include <QFile>
 
