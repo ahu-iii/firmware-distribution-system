@@ -19,11 +19,11 @@
 
 | 目录 | 内容 | 现状 |
 |---|---|---|
-| `common/` | 协议常量、FrameCodec、配置加载、日志、网络层公共部分（FrameChannel、重连退避、信道安全接口）；固件 manifest 和 .fwpkg 容器；升级消息体编解码（UPDATE_NOTIFY、CHUNK_REQ、CHUNK_DATA）；`crypto/`（SecureBuffer、AES-256-GCM、PBKDF2、私钥文件封装、X.509 读取、SHA-256、RSA-3072-PSS 签名验签）；`security/`（TLS 配置、证书完整校验、私钥口令注入、ManifestVerifier：manifest 验签、分片哈希、整镜像校验） | 已实现 |
+| `common/` | 协议常量、FrameCodec、配置加载、日志、网络层公共部分（FrameChannel、重连退避、信道安全接口）；固件 manifest、.fwpkg 容器和模拟固件镜像头；升级消息体编解码（UPDATE_NOTIFY、CHUNK_REQ、CHUNK_DATA）；`crypto/`（SecureBuffer、AES-256-GCM、PBKDF2、私钥文件封装、X.509 读取、SHA-256、RSA-3072-PSS 签名验签）；`security/`（TLS 配置、证书完整校验、私钥口令注入、ManifestVerifier：manifest 验签、分片哈希、整镜像校验） | 已实现 |
 | `server/` | 分发服务端 `fwds-server`：`net/`（TcpServer、Session、ConnLimiter）、`storage/`（SQLite）、`security/`（OperatorAuth：账号口令与角色权限）、`business/`（DeviceRegistry、LoginHandler、LoginThrottle、HeartbeatMonitor、AdminService、DispatchGate、FirmwareRepo、ChunkService）、`ui/`（登录、设备监控、账号管理） | 网络层、TLS、设备注册表与指纹比对、登录失败锁定、账号与角色、“允许下发”开关、设备监控界面、固件包导入检查、分片服务（下发通知、按请求发分片、重连后重发通知）已实现；许可证验签（接入点已留）、固件表入库与导入界面、灰度发布、审计哈希链待实现 |
-| `client/` | 设备客户端 `fwds-client`：`net/`（TcpClient：登录、心跳、断线重连）、`security/`（UpdateValidator：下载前验签、型号、防降级三项检查）、`business/`（Downloader：分片下载）、`storage/`（ResumeStore、ChunkBitmap：断点落盘）、`ui/` | 网络层、TLS、下载前检查、分片下载与断点续传已实现（防降级判定为接入点，随 A/B 分区实现；Downloader 尚未接入主程序，等 FSK 公钥分发和 A/B 分区一起接入）；整包校验与写入、Bootloader、事件 outbox 待实现；界面为骨架 |
-| `signer/` | 离线签发工具 `fwds-signer` | 证书子命令（`ca-init`、`issue-cert`、`revoke`、`update-crl`、`list-certs`）和固件签名子命令（`fsk-init`、`sign-fw`、`verify-fw`）已实现；程序签名、许可证待实现 |
-| `tests/` | GoogleTest 单元测试 | 247 条，覆盖帧编解码、配置、连接限制、加密基础件、证书校验、签发工具、TLS 双向认证、网络层（全部走真实 TLS）、账号口令与锁定、角色权限、设备注册表、设备登录（2005 / 2006 / 2007）、RSA-PSS 签名验签、manifest 解析、先验签后解析、分片与整镜像校验、.fwpkg 容器与篡改检测、升级消息体编解码、断点位图与落盘、分片下载（单片重试、窗口超时、取消、3004）、断点续传联调（断线、设备重启、服务端重启、缓存被改、固件更换） |
+| `client/` | 设备客户端 `fwds-client`：`net/`（TcpClient：登录、心跳、断线重连）、`security/`（UpdateValidator：下载前验签、型号、防降级三项检查；DeviceAntiRollback；固件签名公钥指纹核对）、`business/`（Updater：升级状态机；Downloader：分片下载；Bootloader：启动验签、自检、回滚；Provisioner：出厂写入）、`storage/`（ResumeStore、ChunkBitmap：断点落盘；BootConfig、SlotStore：boot.json 和 A/B 分区）、`ui/` | 网络层、TLS、下载前检查、防降级、分片下载与断点续传、整包校验、A/B 分区写入、模拟重启与自动回滚已实现并接入主程序；界面显示当前固件、分区、升级状态和进度；事件 outbox（PROGRESS / RESULT / ALERT 落盘上报）、许可证、演示面板待实现 |
+| `signer/` | 离线签发工具 `fwds-signer` | 证书子命令（`ca-init`、`issue-cert`、`revoke`、`update-crl`、`list-certs`）和固件子命令（`fsk-init`、`make-image`、`sign-fw`、`verify-fw`）已实现；程序签名、许可证待实现 |
+| `tests/` | GoogleTest 单元测试 | 285 条，覆盖帧编解码、配置、连接限制、加密基础件、证书校验、签发工具、TLS 双向认证、网络层（全部走真实 TLS）、账号口令与锁定、角色权限、设备注册表、设备登录（2005 / 2006 / 2007）、RSA-PSS 签名验签、manifest 解析、先验签后解析、分片与整镜像校验、.fwpkg 容器与篡改检测、升级消息体编解码、断点位图与落盘、分片下载（单片重试、窗口超时、取消、3004）、断点续传联调（断线、设备重启、服务端重启、缓存被改、固件更换）、防降级边界、boot.json 与分区写入顺序、Bootloader 决策（转正、回滚、另一分区、恢复模式）、升级状态机全流程（成功切换分区、自检失败回滚、降级被拒、写入前篡改、各阶段取消、重启途中断电）、出厂写入 |
 | `deploy/config/` | `dev.ini`、`test.ini`、`prod.ini` 配置模板 | 已提供 |
 
 ## 构建与运行
@@ -62,8 +62,9 @@ build/dev/bin/fwds-signer issue-cert --ca-dir local/ca --type device --name DEV-
 read -s FWDS_KEY_PASSPHRASE && export FWDS_KEY_PASSPHRASE
 build/dev/bin/fwds-server --config deploy/config/dev.ini
 
+#    设备端另外需要固件签名公钥和一份出厂固件，见下面“固件签名”和“设备固件与 A/B 分区”两节
 read -s FWDS_KEY_PASSPHRASE && export FWDS_KEY_PASSPHRASE
-build/dev/bin/fwds-client --config deploy/config/dev.ini
+build/dev/bin/fwds-client --config local/dev.local.ini
 ```
 
 服务端第一次启动时账号表是空的，界面会先要求创建一个维护员账号（口令至少 10 个字符，含字母和数字）。之后：
@@ -74,7 +75,7 @@ build/dev/bin/fwds-client --config deploy/config/dev.ini
 
 数据库文件的位置在配置 `[server] db_file`（dev 模板为 `local/data/fwds-server.db`）。加 `--headless` 运行时没有账号登录，只做监控，不能执行管理操作。
 
-多开设备：再签一张 `DEV-002` 的证书，复制一份配置（命名为 `*.local.ini`），改 `device_id` 和 `[client]` 的 `cert_file`、`key_file`。
+多开设备：再签一张 `DEV-002` 的证书，复制一份配置（命名为 `*.local.ini`），改 `device_id` 和 `[client]` 的 `cert_file`、`key_file`、`data_dir`（每台设备一个数据目录）。
 
 吊销演练：`fwds-signer revoke --ca-dir local/ca --name DEV-001`，然后用新的 `local/ca/crl.pem` 覆盖配置里 `crl_file` 指向的文件；服务端在下一次握手前自动重新加载，该设备重连即被拒绝。CRL 默认 30 天有效，到期前用 `fwds-signer update-crl` 刷新。
 
@@ -86,16 +87,39 @@ build/dev/bin/fwds-client --config deploy/config/dev.ini
 # 1. 生成固件签名密钥（RSA-3072）。提示设置 FSK 口令；结束时显示公钥指纹，记下来供分发公钥时核对
 build/dev/bin/fwds-signer fsk-init --fsk-dir local/fsk
 
-# 2. 给一个固件镜像签名并打包。提示输入 FSK 口令；写出 .fwpkg 后会自动用公钥完整检查一遍
+# 2. 生成一个模拟固件镜像（课程原型没有真实固件：37 字节的头 + 随机载荷）
+build/dev/bin/fwds-signer make-image --model PLC-X200 --fw-version 2.1.0 --size 10485760 --out fw_v2.1.0.bin
+
+# 3. 给固件镜像签名并打包。提示输入 FSK 口令；写出 .fwpkg 后会自动用公钥完整检查一遍
 build/dev/bin/fwds-signer sign-fw --fsk-dir local/fsk --image fw_v2.1.0.bin \
     --model PLC-X200 --fw-version 2.1.0 --security-version 5 --note "发布说明" \
     --out local/fw/fw_v2.1.0_sv5.fwpkg
 
-# 3. 任何拿到公钥的人都可以检查一个固件包（不需要口令）
+# 4. 任何拿到公钥的人都可以检查一个固件包（不需要口令）
 build/dev/bin/fwds-signer verify-fw --pubkey local/fsk/fsk.pub.pem --pkg local/fw/fw_v2.1.0_sv5.fwpkg
 ```
 
 `local/fsk/fsk.key` 是 AES-256-GCM 封装的私钥，不离开签发主机；`fsk.pub.pem` 是公钥，分发给服务端和设备。`--security-version` 只增不减：修了安全漏洞的版本加 1，设备据此拒绝装回旧固件。
+
+### 设备固件与 A/B 分区
+
+设备端只装“指纹与配置一致的那把 FSK 公钥”签过的固件。准备一台模拟设备：
+
+```sh
+# 1. 复制一份设备配置，把 fsk-init 显示的公钥指纹填进 [client] fsk_pub_sha256
+cp deploy/config/dev.ini local/dev.local.ini      # 然后编辑 fsk_pub_sha256=<指纹>
+
+# 2. 出厂写入：给空设备的分区 a 装第一份固件（先用 make-image、sign-fw 做一个 2.0.0 的包）。不需要私钥口令
+build/dev/bin/fwds-client --config local/dev.local.ini --provision local/fw/fw_v2.0.0_sv4.fwpkg
+```
+
+设备数据目录（`[client] data_dir`，dev 模板为 `local/device/DEV-001`）里是模拟的 Flash：`slot_a/`、`slot_b/` 各放一份固件（`firmware.bin`、`manifest.json`、`manifest.sig`），`boot.json` 记录活动分区、待确认分区、启动次数和最小安全版本号，`download/` 是下载缓存。
+
+- 每次启动先由 Bootloader 对分区验签，再联网；LOGIN 上报的版本和活动分区就是它选定的。
+- 升级时新固件只写非活动分区，写完模拟重启；验签、自检通过才切换分区并提升最小安全版本号，否则自动回到原分区（`ROLLED_BACK`）。
+- 回滚演示：`make-image --selftest-fail` 生成签名合法但自检必定失败的镜像。防降级演示：升级成功后再推送旧版本，设备以 `3003` 拒绝。
+- 不做出厂写入也可以：空设备以“恢复模式”上线，等服务端推送第一份固件。
+- 目前服务端还没有固件库和发布界面（灰度发布那一步加入），整条升级链路由单元测试 `UpdaterTest`、`BootloaderTest`、`ChunkDownload` 覆盖。
 
 说明：
 

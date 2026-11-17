@@ -1,6 +1,6 @@
 // fwds-signer：离线签发工具（命令行），只在签发主机上运行。
 // 证书相关的子命令（ca-init、issue-cert、revoke、update-crl、list-certs）和
-// 固件签名相关的（fsk-init、sign-fw、verify-fw）已实现；sign-exe、issue-lic 待实现。
+// 固件相关的（fsk-init、make-image、sign-fw、verify-fw）已实现；sign-exe、issue-lic 待实现。
 //
 // 口令：CA 口令每次在终端输入（不回显）；没有终端时从环境变量 FWDS_CA_PASSPHRASE 读取。
 // 新签发的服务端 / 设备私钥的口令同理，环境变量是 FWDS_KEY_PASSPHRASE；
@@ -12,6 +12,8 @@
 #include <memory>
 
 #include "common/config.h"
+#include "common/crypto/rand.h"
+#include "common/firmware_image.h"
 #include "common/firmware_package.h"
 #include "common/security/key_store.h"
 #include "signer/ca_store.h"
@@ -37,6 +39,7 @@ const Command kCommands[] = {
     {"update-crl", "重新生成 CRL（吊销名单不变，刷新有效期）"},
     {"list-certs", "列出已签发的证书"},
     {"fsk-init", "生成固件签名密钥 FSK（RSA-3072）"},
+    {"make-image", "生成模拟固件镜像（可生成“自检必定失败”的镜像，演示回滚用）"},
     {"sign-fw", "对固件镜像生成 manifest、签名并打包为 .fwpkg"},
     {"verify-fw", "用 FSK 公钥完整检查一个 .fwpkg"},
     {"sign-exe", "给客户端程序签名"},
@@ -323,6 +326,69 @@ int cmdFskInit(const QStringList& args) {
   return 0;
 }
 
+// make-image：生成一个模拟固件镜像（格式见 common/firmware_image.h）。
+// 课程原型没有真实的固件可用，镜像由 37 字节的头加随机载荷组成；这一步不涉及任何密钥。
+int cmdMakeImage(const QStringList& args) {
+  QCommandLineParser parser;
+  parser.setApplicationDescription(
+      QStringLiteral("生成模拟固件镜像：镜像头（型号、版本、自检标志）+ 随机载荷，之后用 sign-fw 签名"));
+  const QCommandLineOption modelOpt(QStringLiteral("model"),
+                                    QStringLiteral("设备型号，最长 16 个字符（必填）"),
+                                    QStringLiteral("model"));
+  const QCommandLineOption versionOpt(QStringLiteral("fw-version"),
+                                      QStringLiteral("固件版本号 主.次.修订（必填）"),
+                                      QStringLiteral("x.y.z"));
+  const QCommandLineOption sizeOpt(QStringLiteral("size"),
+                                   QStringLiteral("镜像总字节数，37 ~ 268435456（必填）"),
+                                   QStringLiteral("bytes"));
+  const QCommandLineOption failOpt(QStringLiteral("selftest-fail"),
+                                   QStringLiteral("生成启动自检必定失败的镜像（签名合法，用于演示回滚）"));
+  const QCommandLineOption outOpt(QStringLiteral("out"), QStringLiteral("输出的镜像文件（必填）"),
+                                  QStringLiteral("file"));
+  parser.addHelpOption();
+  for (const QCommandLineOption& option : {modelOpt, versionOpt, sizeOpt, failOpt, outOpt}) {
+    parser.addOption(option);
+  }
+  parser.process(args);
+  for (const QCommandLineOption& option : {modelOpt, versionOpt, sizeOpt, outOpt}) {
+    if (!parser.isSet(option)) return fail(QStringLiteral("缺少 --%1").arg(option.names().first()));
+  }
+
+  fwds::ImageHeader header;
+  header.model = parser.value(modelOpt);
+  header.version = parser.value(versionOpt);
+  header.selfTestFails = parser.isSet(failOpt);
+  fwds::FirmwareVersion version;
+  const QByteArray headerBytes = fwds::buildImageHeader(header);
+  if (headerBytes.isEmpty() || !fwds::parseFirmwareVersion(header.version, &version)) {
+    return fail(QStringLiteral("--model 必须是 1 ~ 16 个可见 ASCII 字符，--fw-version 必须是 主.次.修订"));
+  }
+  bool ok = false;
+  const qint64 size = parser.value(sizeOpt).toLongLong(&ok);
+  if (!ok || size < fwds::kImageHeaderSize || size > fwds::kMaxImageSize) {
+    return fail(QStringLiteral("--size 必须在 %1 ~ %2 之间").arg(fwds::kImageHeaderSize).arg(fwds::kMaxImageSize));
+  }
+
+  const QString outPath = parser.value(outOpt);
+  if (QFile::exists(outPath)) return fail(QStringLiteral("%1 已存在，不覆盖").arg(outPath));
+  QFile file(outPath);
+  if (!file.open(QIODevice::WriteOnly) || file.write(headerBytes) != headerBytes.size()) {
+    return fail(QStringLiteral("无法写入 %1：%2").arg(outPath, file.errorString()));
+  }
+  // 载荷用随机数填充，每次最多 1 MB，不把整个镜像放进内存
+  qint64 remaining = size - headerBytes.size();
+  while (remaining > 0) {
+    const QByteArray block = fwds::randomBytes(static_cast<int>(qMin<qint64>(remaining, 1024 * 1024)));
+    if (file.write(block) != block.size()) {
+      return fail(QStringLiteral("无法写入 %1：%2").arg(outPath, file.errorString()));
+    }
+    remaining -= block.size();
+  }
+  out() << "模拟固件镜像已生成：" << outPath << "（" << size << " 字节，"
+        << (header.selfTestFails ? "启动自检必定失败" : "启动自检通过") << "）\n";
+  return 0;
+}
+
 int cmdSignFw(const QStringList& args) {
   QCommandLineParser parser;
   parser.setApplicationDescription(
@@ -437,6 +503,7 @@ int main(int argc, char* argv[]) {
   if (command == QLatin1String("update-crl")) return cmdUpdateCrl(args);
   if (command == QLatin1String("list-certs")) return cmdListCerts(args);
   if (command == QLatin1String("fsk-init")) return cmdFskInit(args);
+  if (command == QLatin1String("make-image")) return cmdMakeImage(args);
   if (command == QLatin1String("sign-fw")) return cmdSignFw(args);
   if (command == QLatin1String("verify-fw")) return cmdVerifyFw(args);
 

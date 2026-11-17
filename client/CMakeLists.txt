@@ -3,14 +3,28 @@ add_library(fwds_client_lib STATIC
   net/tcp_client.h
   net/tcp_client.cpp
   security/anti_rollback.h
+  security/anti_rollback.cpp
+  security/fsk_public_key.h
+  security/fsk_public_key.cpp
   security/update_validator.h
   security/update_validator.cpp
+  storage/file_sync.h
+  storage/boot_config.h
+  storage/boot_config.cpp
+  storage/slot_store.h
+  storage/slot_store.cpp
   storage/chunk_bitmap.h
   storage/chunk_bitmap.cpp
   storage/resume_store.h
   storage/resume_store.cpp
   business/downloader.h
   business/downloader.cpp
+  business/bootloader.h
+  business/bootloader.cpp
+  business/updater.h
+  business/updater.cpp
+  business/provisioner.h
+  business/provisioner.cpp
 )
 target_link_libraries(fwds_client_lib PUBLIC fwds_common)
 

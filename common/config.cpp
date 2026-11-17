@@ -1,6 +1,7 @@
 #include "common/config.h"
 
 #include <QFileInfo>
+#include <QRegularExpression>
 #include <QSettings>
 
 namespace fwds {
@@ -58,10 +59,10 @@ bool readProtocol(const QSettings& s, ProtocolParams* p, QString* error) {
     return false;
   }
 
-  // 帧长上限只能调小，不能超过协议规定的 1 MB
+  // 帧长上限只能调小，不能超过协议规定的 1 MB；也不能小到装不下一片固件（24 字节头 + 64 KB）
   int maxBody = static_cast<int>(p->maxFrameBody);
-  if (!readInt(s, QStringLiteral("protocol/max_frame_body"), 1, static_cast<int>(kMaxBodyLength),
-               &maxBody, error)) {
+  if (!readInt(s, QStringLiteral("protocol/max_frame_body"), static_cast<int>(kMinFrameBody),
+               static_cast<int>(kMaxBodyLength), &maxBody, error)) {
     return false;
   }
   p->maxFrameBody = static_cast<quint32>(maxBody);
@@ -163,7 +164,18 @@ bool loadClientConfig(const QString& path, ClientConfig* out, QString* error) {
   if (!readRequiredString(s, QStringLiteral("client/server_host"), &cfg.serverHost, error) ||
       !readPort(s, QStringLiteral("client/server_port"), &cfg.serverPort, error) ||
       !readRequiredString(s, QStringLiteral("client/device_id"), &cfg.deviceId, error) ||
-      !readRequiredString(s, QStringLiteral("client/model"), &cfg.model, error)) {
+      !readRequiredString(s, QStringLiteral("client/model"), &cfg.model, error) ||
+      !readRequiredString(s, QStringLiteral("client/data_dir"), &cfg.dataDir, error) ||
+      !readRequiredString(s, QStringLiteral("client/fsk_pub_file"), &cfg.fskPubFile, error) ||
+      !readRequiredString(s, QStringLiteral("client/fsk_pub_sha256"), &cfg.fskPubSha256, error) ||
+      !readInt(s, QStringLiteral("client/reboot_delay_ms"), 0, 60000, &cfg.rebootDelayMs, error)) {
+    return false;
+  }
+  // 指纹是 SHA-256 的十六进制写法，统一成小写再比较
+  cfg.fskPubSha256 = cfg.fskPubSha256.toLower();
+  static const QRegularExpression kFingerprint(QStringLiteral("\\A[0-9a-f]{64}\\z"));
+  if (!kFingerprint.match(cfg.fskPubSha256).hasMatch()) {
+    *error = QStringLiteral("配置项 client/fsk_pub_sha256 必须是 64 个十六进制字符");
     return false;
   }
   cfg.logLevel = s.value(QStringLiteral("log/level"), cfg.logLevel).toString().trimmed().toUpper();

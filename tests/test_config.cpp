@@ -24,6 +24,10 @@ class ConfigTest : public ::testing::Test {
 // 两端都必填的 TLS 配置
 const QByteArray kServerTls = "db_file=s.db\ncert_file=s.pem\nkey_file=s.key\n";
 const QByteArray kClientTls = "cert_file=d.pem\nkey_file=d.key\n";
+// 设备端必填的数据目录和固件签名公钥
+const QByteArray kClientDevice =
+    "data_dir=dev1\nfsk_pub_file=fsk.pub.pem\n"
+    "fsk_pub_sha256=00112233445566778899AABBCCDDEEFF00112233445566778899aabbccddeeff\n";
 const QByteArray kTls = "[tls]\nca_file=ca.pem\ncrl_file=crl.pem\n";
 
 }  // namespace
@@ -122,12 +126,34 @@ TEST_F(ConfigTest, ClientConfigLoads) {
   QString error;
   ASSERT_TRUE(loadClientConfig(
       write("[client]\nserver_host=fwds.example\nserver_port=9443\ndevice_id=DEV-001\nmodel=PLC-X200\n" +
-            kClientTls + kTls),
+            kClientDevice + kClientTls + kTls),
       &cfg, &error))
       << error.toStdString();
   EXPECT_EQ(cfg.serverHost, QStringLiteral("fwds.example"));
   EXPECT_EQ(cfg.serverPort, 9443);
   EXPECT_EQ(cfg.deviceId, QStringLiteral("DEV-001"));
+  EXPECT_EQ(cfg.dataDir, QStringLiteral("dev1"));
+  EXPECT_EQ(cfg.rebootDelayMs, 2000);  // 没写就用默认值
+  // 指纹统一成小写
+  EXPECT_EQ(cfg.fskPubSha256,
+            QStringLiteral("00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"));
+}
+
+// 设备端的数据目录、固件签名公钥和公钥指纹缺一不可；指纹格式不对也不行
+TEST_F(ConfigTest, ClientDeviceItemsAreRequired) {
+  const QByteArray head =
+      "[client]\nserver_host=fwds.example\nserver_port=9443\ndevice_id=DEV-001\nmodel=PLC-X200\n";
+  ClientConfig cfg;
+  QString error;
+  EXPECT_FALSE(loadClientConfig(write(head + kClientTls + kTls), &cfg, &error));
+  EXPECT_TRUE(error.contains(QStringLiteral("data_dir")));
+  EXPECT_FALSE(loadClientConfig(
+      write(head + "data_dir=dev1\nfsk_pub_file=fsk.pub.pem\n" + kClientTls + kTls), &cfg, &error));
+  EXPECT_TRUE(error.contains(QStringLiteral("fsk_pub_sha256")));
+  EXPECT_FALSE(loadClientConfig(
+      write(head + "data_dir=dev1\nfsk_pub_file=fsk.pub.pem\nfsk_pub_sha256=abc123\n" + kClientTls + kTls),
+      &cfg, &error));
+  EXPECT_TRUE(error.contains(QStringLiteral("fsk_pub_sha256")));
 }
 
 TEST_F(ConfigTest, ProtocolValuesAreValidated) {
@@ -136,6 +162,15 @@ TEST_F(ConfigTest, ProtocolValuesAreValidated) {
   QString error;
   // 帧长上限不能超过协议规定的 1 MB
   EXPECT_FALSE(loadServerConfig(write(base + "max_frame_body=1048577\n"), &cfg, &error));
+  // 也不能小到装不下一片固件：CHUNK_DATA 是 24 字节头 + 65536 字节数据
+  // （[server] 的必填项先于 [protocol] 检查，所以这里把 db_file 也写上）
+  const QByteArray full =
+      "[server]\nlisten_address=127.0.0.1\nlisten_port=9443\ndb_file=s.db\n[protocol]\n";
+  EXPECT_FALSE(loadServerConfig(write(full + "max_frame_body=65559\n"), &cfg, &error));
+  EXPECT_TRUE(error.contains(QStringLiteral("max_frame_body"))) << error.toStdString();
+  error.clear();
+  loadServerConfig(write(full + "max_frame_body=65560\n"), &cfg, &error);
+  EXPECT_FALSE(error.contains(QStringLiteral("max_frame_body")));  // 65560 本身是允许的
   EXPECT_FALSE(loadServerConfig(write(base + "login_timeout_ms=abc\n"), &cfg, &error));
   EXPECT_FALSE(loadServerConfig(write(base + "reconnect_backoff_ms=1000,x\n"), &cfg, &error));
   // 离线判定时间必须大于心跳间隔
@@ -143,7 +178,8 @@ TEST_F(ConfigTest, ProtocolValuesAreValidated) {
       write(base + "heartbeat_interval_ms=5000\nheartbeat_timeout_ms=5000\n"), &cfg, &error));
 }
 
-// 仓库里的三份模板：dev 可以直接用（证书路径指向本机生成的 local/pki），
+// 仓库里的三份模板：dev 的服务端部分可以直接用（证书路径指向本机生成的 local/pki），
+// 设备端只差一项：固件签名公钥的指纹每台签发主机都不同，必须按 fsk-init 的输出填写；
 // test / prod 的占位符没改就不能启动
 TEST(ConfigTemplates, ShippedTemplatesBehaveAsDocumented) {
   const QString dir = QStringLiteral(FWDS_SOURCE_DIR "/deploy/config/");
@@ -151,7 +187,20 @@ TEST(ConfigTemplates, ShippedTemplatesBehaveAsDocumented) {
   ClientConfig client;
   QString error;
   EXPECT_TRUE(loadServerConfig(dir + QStringLiteral("dev.ini"), &server, &error)) << error.toStdString();
-  EXPECT_TRUE(loadClientConfig(dir + QStringLiteral("dev.ini"), &client, &error)) << error.toStdString();
+  EXPECT_FALSE(loadClientConfig(dir + QStringLiteral("dev.ini"), &client, &error));
+  EXPECT_TRUE(error.contains(QStringLiteral("fsk_pub_sha256"))) << error.toStdString();
+  // 把指纹填上之后，dev 模板的设备端部分就能用了
+  QFile devTemplate(dir + QStringLiteral("dev.ini"));
+  ASSERT_TRUE(devTemplate.open(QIODevice::ReadOnly));
+  QByteArray filled = devTemplate.readAll();
+  filled.replace("fsk_pub_sha256=<FSK 公钥指纹>", "fsk_pub_sha256=" + QByteArray(64, 'a'));
+  QTemporaryDir tmp;
+  QFile filledFile(tmp.filePath(QStringLiteral("dev.local.ini")));
+  ASSERT_TRUE(filledFile.open(QIODevice::WriteOnly));
+  filledFile.write(filled);
+  filledFile.close();
+  ASSERT_TRUE(loadClientConfig(filledFile.fileName(), &client, &error)) << error.toStdString();
+  EXPECT_EQ(client.dataDir, QStringLiteral("local/device/DEV-001"));
   EXPECT_EQ(server.protocol.reconnectBackoffMs, ProtocolParams().reconnectBackoffMs);
   // 分片下载的三个参数：模板里写的是协议第 8 节的默认值
   EXPECT_EQ(client.protocol.chunkWindow, 16);

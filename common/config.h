@@ -55,10 +55,23 @@ struct ClientConfig {
   quint16 serverPort = 0;
   QString deviceId;
   QString model;
+  // 设备数据目录：模拟 Flash 的 slot_a/、slot_b/、boot.json 和下载目录 download/ 都在这里（设计 5.2 节）
+  QString dataDir;
+  // 固件签名公钥（FSK 公钥，PEM）的位置和它的指纹（公钥 DER 的 SHA-256，64 个十六进制字符）。
+  // 公钥不是秘密，可以放在文件里；指纹由部署人员按 fsk-init 显示的值填写，
+  // 启动时两者对不上就不运行，防止装错公钥（设计 11.3 节）。
+  QString fskPubFile;
+  QString fskPubSha256;
+  // 模拟重启要“黑屏”多久（毫秒）。只影响演示时 REBOOTING 状态停留的时间。
+  int rebootDelayMs = 2000;
   QString logLevel = QStringLiteral("INFO");
   ProtocolParams protocol;
   TlsConfig tls;
 };
+
+// max_frame_body 的下限：一帧 CHUNK_DATA 是 24 字节头加一片 64 KB 数据（协议 5.6 节），
+// 帧长上限比它还小的话，分片根本发不出去。
+inline constexpr quint32 kMinFrameBody = 24 + 65536;
 
 // 读取并校验配置。必填项缺失或取值非法时返回 false，error 说明是哪一项。
 bool loadServerConfig(const QString& path, ServerConfig* out, QString* error);

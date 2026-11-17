@@ -1,7 +1,6 @@
 #include "common/security/manifest_verifier.h"
 
 #include "common/crypto/rsa_pss.h"
-#include "common/crypto/sha256.h"
 
 namespace fwds {
 
@@ -42,26 +41,38 @@ bool chunkMatches(const Manifest& manifest, int index, const QByteArray& data) {
   return sha256(data) == manifest.chunkSha256.at(index);
 }
 
-bool verifyImage(QIODevice* image, const Manifest& manifest, QString* error) {
-  Sha256 whole;  // 整镜像哈希，和分片哈希同时算，只读一遍
-  for (int index = 0; index < manifest.chunkCount; ++index) {
-    const qint64 expected = manifest.chunkLength(index);
-    const QByteArray chunk = image->read(expected);
+ImageCheck::ImageCheck(QIODevice* image, const Manifest& manifest)
+    : image_(image), manifest_(manifest) {}
+
+ImageCheck::Step ImageCheck::step(int maxChunks, QString* error) {
+  const int end = qMin(manifest_.chunkCount, next_ + maxChunks);
+  for (; next_ < end; ++next_) {
+    const qint64 expected = manifest_.chunkLength(next_);
+    const QByteArray chunk = image_->read(expected);
     if (chunk.size() != expected) {
-      *error = QStringLiteral("镜像长度不足：第 %1 片读不满").arg(index);
-      return false;
+      *error = QStringLiteral("镜像长度不足：第 %1 片读不满").arg(next_);
+      return Step::Failed;
     }
-    if (!chunkMatches(manifest, index, chunk)) {
-      *error = QStringLiteral("第 %1 片的哈希与 manifest 不符").arg(index);
-      return false;
+    if (!chunkMatches(manifest_, next_, chunk)) {
+      *error = QStringLiteral("第 %1 片的哈希与 manifest 不符").arg(next_);
+      return Step::Failed;
     }
-    whole.update(chunk);
+    whole_.update(chunk);
   }
-  if (whole.finish() != manifest.imageSha256) {
+  if (next_ < manifest_.chunkCount) return Step::More;
+
+  if (whole_.finish() != manifest_.imageSha256) {
     *error = QStringLiteral("整镜像哈希与 manifest 不符");
-    return false;
+    return Step::Failed;
   }
-  return true;
+  return Step::Passed;
+}
+
+bool verifyImage(QIODevice* image, const Manifest& manifest, QString* error) {
+  ImageCheck check(image, manifest);
+  ImageCheck::Step result = ImageCheck::Step::More;
+  while (result == ImageCheck::Step::More) result = check.step(kImageCheckStepChunks, error);
+  return result == ImageCheck::Step::Passed;
 }
 
 }  // namespace fwds
