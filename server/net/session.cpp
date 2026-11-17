@@ -174,6 +174,11 @@ bool Session::sendError(ErrorCode code, const QString& message) {
   return channel_->sendError(code, message);
 }
 
+qint64 Session::pendingSendBytes() const {
+  // bytesToWrite 是还没加密的明文，encryptedBytesToWrite 是加密后等着写进 TCP 的密文
+  return socket_->bytesToWrite() + socket_->encryptedBytesToWrite();
+}
+
 void Session::close(const QString& reason) {
   if (state_ == State::Closed) return;
   if (closeReason_.isEmpty()) closeReason_ = reason;

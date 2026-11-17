@@ -17,6 +17,9 @@ struct ProtocolParams {
   int heartbeatTimeoutMs = 15000;   // 服务端离线判定 / 客户端等应答时限
   int loginTsWindowMs = 60000;      // LOGIN 时间戳窗口
   quint32 maxFrameBody = kMaxBodyLength;
+  int chunkWindow = 16;             // 一次 CHUNK_REQ 请求的片数（1 ~ 16）
+  int chunkWindowTimeoutMs = 10000; // 一个窗口等不齐时，过多久重新请求
+  int chunkRetryLimit = 3;          // 同一片哈希连续不符几次就中止并告警
   QList<int> reconnectBackoffMs = {1000, 2000, 4000, 8000, 16000, 30000};
 };
 

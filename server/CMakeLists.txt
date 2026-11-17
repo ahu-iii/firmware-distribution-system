@@ -20,6 +20,10 @@ add_library(fwds_server_lib STATIC
   business/heartbeat_monitor.h
   business/heartbeat_monitor.cpp
   business/dispatch_gate.h
+  business/firmware_repo.h
+  business/firmware_repo.cpp
+  business/chunk_service.h
+  business/chunk_service.cpp
   business/admin_service.h
   business/admin_service.cpp
 )
