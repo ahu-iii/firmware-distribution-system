@@ -66,6 +66,14 @@ bool readProtocol(const QSettings& s, ProtocolParams* p, QString* error) {
   }
   p->maxFrameBody = static_cast<quint32>(maxBody);
 
+  // 分片下载：请求窗口不能超过协议规定的 16 片（协议 5.5 节）
+  if (!readInt(s, QStringLiteral("protocol/chunk_window"), 1, 16, &p->chunkWindow, error) ||
+      !readInt(s, QStringLiteral("protocol/chunk_window_timeout_ms"), 1, kDay,
+               &p->chunkWindowTimeoutMs, error) ||
+      !readInt(s, QStringLiteral("protocol/chunk_retry_limit"), 1, 100, &p->chunkRetryLimit, error)) {
+    return false;
+  }
+
   // 重连退避序列，逗号分隔。QSettings 会把带逗号的值解析成列表。
   const QString key = QStringLiteral("protocol/reconnect_backoff_ms");
   if (s.contains(key)) {

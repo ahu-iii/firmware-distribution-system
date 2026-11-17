@@ -13,6 +13,7 @@
 #include "common/security/key_store.h"
 #include "common/security/tls_channel.h"
 #include "server/business/admin_service.h"
+#include "server/business/chunk_service.h"
 #include "server/business/device_registry.h"
 #include "server/business/dispatch_gate.h"
 #include "server/business/heartbeat_monitor.h"
@@ -112,6 +113,9 @@ int main(int argc, char* argv[]) {
   qCWarning(fwds::lcApp) << "license check is not available in this build, LOGIN skips it";
   fwds::LoginHandler loginHandler(config.protocol, &registry, &loginThrottle, licenseVerifier);
   fwds::HeartbeatMonitor heartbeatMonitor(&server, &registry);
+  // 分片服务：应答设备的 CHUNK_REQ。给哪台设备下发哪个包由发布模块决定（灰度发布一步接入），
+  // 在那之前没有任何下发记录，所有 CHUNK_REQ 都得到 3009
+  fwds::ChunkService chunkService(&server, config.protocol);
   QObject::connect(&server, &fwds::TcpServer::sessionOpened, &loginHandler,
                    [&loginHandler](fwds::Session* session) {
                      QObject::connect(session, &fwds::Session::loginRequested, &loginHandler,

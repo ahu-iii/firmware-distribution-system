@@ -43,6 +43,9 @@ class Session : public QObject {
   // 发送不关闭连接的 ERROR（3xxx、1005）。
   bool sendError(ErrorCode code, const QString& message = QString());
 
+  // 已交给 socket、还没发到网络上的字节数。分片服务用它做流控：积压太多就先不发新的。
+  qint64 pendingSendBytes() const;
+
   // 业务层更新“已连续收到的最大事件序号”，随 HEARTBEAT_ACK 返回给设备。
   void setEventAck(qint64 eventAck) { eventAck_ = eventAck; }
   // 业务层登记设备 ID，只用于界面显示和日志。

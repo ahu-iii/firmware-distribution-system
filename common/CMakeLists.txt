@@ -9,6 +9,8 @@ add_library(fwds_common STATIC
   manifest.cpp
   firmware_package.h
   firmware_package.cpp
+  update_messages.h
+  update_messages.cpp
   config.h
   config.cpp
   log.h

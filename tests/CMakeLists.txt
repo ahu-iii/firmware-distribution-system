@@ -33,6 +33,10 @@ add_executable(fwds-tests
   test_manifest_verifier.cpp
   test_firmware_package.cpp
   test_update_validator.cpp
+  test_update_messages.cpp
+  test_resume_store.cpp
+  test_downloader.cpp
+  test_chunk_download.cpp
 )
 target_link_libraries(fwds-tests PRIVATE fwds_server_lib fwds_client_lib fwds_signer_lib GTest::gtest)
 

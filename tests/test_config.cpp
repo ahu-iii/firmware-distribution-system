@@ -153,6 +153,10 @@ TEST(ConfigTemplates, ShippedTemplatesBehaveAsDocumented) {
   EXPECT_TRUE(loadServerConfig(dir + QStringLiteral("dev.ini"), &server, &error)) << error.toStdString();
   EXPECT_TRUE(loadClientConfig(dir + QStringLiteral("dev.ini"), &client, &error)) << error.toStdString();
   EXPECT_EQ(server.protocol.reconnectBackoffMs, ProtocolParams().reconnectBackoffMs);
+  // 分片下载的三个参数：模板里写的是协议第 8 节的默认值
+  EXPECT_EQ(client.protocol.chunkWindow, 16);
+  EXPECT_EQ(client.protocol.chunkWindowTimeoutMs, 10000);
+  EXPECT_EQ(client.protocol.chunkRetryLimit, 3);
   EXPECT_FALSE(loadServerConfig(dir + QStringLiteral("test.ini"), &server, &error));
   EXPECT_FALSE(loadClientConfig(dir + QStringLiteral("test.ini"), &client, &error));
   EXPECT_FALSE(loadServerConfig(dir + QStringLiteral("prod.ini"), &server, &error));
