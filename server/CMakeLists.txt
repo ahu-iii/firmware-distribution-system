@@ -24,6 +24,8 @@ add_library(fwds_server_lib STATIC
   business/firmware_repo.cpp
   business/chunk_service.h
   business/chunk_service.cpp
+  business/rollout_manager.h
+  business/rollout_manager.cpp
   business/admin_service.h
   business/admin_service.cpp
 )
@@ -41,5 +43,7 @@ add_executable(fwds-server
   ui/device_page.cpp
   ui/account_page.h
   ui/account_page.cpp
+  ui/firmware_page.h
+  ui/firmware_page.cpp
 )
 target_link_libraries(fwds-server PRIVATE fwds_server_lib Qt6::Widgets)

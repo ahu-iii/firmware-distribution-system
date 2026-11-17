@@ -4,8 +4,6 @@ add_library(fwds_client_lib STATIC
   net/tcp_client.cpp
   security/anti_rollback.h
   security/anti_rollback.cpp
-  security/fsk_public_key.h
-  security/fsk_public_key.cpp
   security/update_validator.h
   security/update_validator.cpp
   storage/file_sync.h

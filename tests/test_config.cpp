@@ -22,12 +22,16 @@ class ConfigTest : public ::testing::Test {
 };
 
 // 两端都必填的 TLS 配置
-const QByteArray kServerTls = "db_file=s.db\ncert_file=s.pem\nkey_file=s.key\n";
+// 固件签名公钥及其指纹，两端的写法一样
+const QByteArray kFsk =
+    "fsk_pub_file=fsk.pub.pem\n"
+    "fsk_pub_sha256=00112233445566778899AABBCCDDEEFF00112233445566778899aabbccddeeff\n";
+// 服务端必填的数据库、固件库目录、固件签名公钥和本端证书
+const QByteArray kServerTls =
+    "db_file=s.db\nfirmware_dir=fw\n" + kFsk + "cert_file=s.pem\nkey_file=s.key\n";
 const QByteArray kClientTls = "cert_file=d.pem\nkey_file=d.key\n";
 // 设备端必填的数据目录和固件签名公钥
-const QByteArray kClientDevice =
-    "data_dir=dev1\nfsk_pub_file=fsk.pub.pem\n"
-    "fsk_pub_sha256=00112233445566778899AABBCCDDEEFF00112233445566778899aabbccddeeff\n";
+const QByteArray kClientDevice = "data_dir=dev1\n" + kFsk;
 const QByteArray kTls = "[tls]\nca_file=ca.pem\ncrl_file=crl.pem\n";
 
 }  // namespace
@@ -163,9 +167,9 @@ TEST_F(ConfigTest, ProtocolValuesAreValidated) {
   // 帧长上限不能超过协议规定的 1 MB
   EXPECT_FALSE(loadServerConfig(write(base + "max_frame_body=1048577\n"), &cfg, &error));
   // 也不能小到装不下一片固件：CHUNK_DATA 是 24 字节头 + 65536 字节数据
-  // （[server] 的必填项先于 [protocol] 检查，所以这里把 db_file 也写上）
-  const QByteArray full =
-      "[server]\nlisten_address=127.0.0.1\nlisten_port=9443\ndb_file=s.db\n[protocol]\n";
+  // （[server] 的必填项先于 [protocol] 检查，所以这里把它们也写上）
+  const QByteArray full = "[server]\nlisten_address=127.0.0.1\nlisten_port=9443\ndb_file=s.db\n"
+                          "firmware_dir=fw\n" + kFsk + "[protocol]\n";
   EXPECT_FALSE(loadServerConfig(write(full + "max_frame_body=65559\n"), &cfg, &error));
   EXPECT_TRUE(error.contains(QStringLiteral("max_frame_body"))) << error.toStdString();
   error.clear();
@@ -178,18 +182,19 @@ TEST_F(ConfigTest, ProtocolValuesAreValidated) {
       write(base + "heartbeat_interval_ms=5000\nheartbeat_timeout_ms=5000\n"), &cfg, &error));
 }
 
-// 仓库里的三份模板：dev 的服务端部分可以直接用（证书路径指向本机生成的 local/pki），
-// 设备端只差一项：固件签名公钥的指纹每台签发主机都不同，必须按 fsk-init 的输出填写；
+// 仓库里的三份模板：dev 的路径指向本机生成的 local/ 目录，两端都只差一项：
+// 固件签名公钥的指纹每台签发主机都不同，必须按 fsk-init 的输出填写；
 // test / prod 的占位符没改就不能启动
 TEST(ConfigTemplates, ShippedTemplatesBehaveAsDocumented) {
   const QString dir = QStringLiteral(FWDS_SOURCE_DIR "/deploy/config/");
   ServerConfig server;
   ClientConfig client;
   QString error;
-  EXPECT_TRUE(loadServerConfig(dir + QStringLiteral("dev.ini"), &server, &error)) << error.toStdString();
+  EXPECT_FALSE(loadServerConfig(dir + QStringLiteral("dev.ini"), &server, &error));
+  EXPECT_TRUE(error.contains(QStringLiteral("fsk_pub_sha256"))) << error.toStdString();
   EXPECT_FALSE(loadClientConfig(dir + QStringLiteral("dev.ini"), &client, &error));
   EXPECT_TRUE(error.contains(QStringLiteral("fsk_pub_sha256"))) << error.toStdString();
-  // 把指纹填上之后，dev 模板的设备端部分就能用了
+  // 把指纹填上之后（[server] 和 [client] 各一处），dev 模板就能用了
   QFile devTemplate(dir + QStringLiteral("dev.ini"));
   ASSERT_TRUE(devTemplate.open(QIODevice::ReadOnly));
   QByteArray filled = devTemplate.readAll();
@@ -199,7 +204,9 @@ TEST(ConfigTemplates, ShippedTemplatesBehaveAsDocumented) {
   ASSERT_TRUE(filledFile.open(QIODevice::WriteOnly));
   filledFile.write(filled);
   filledFile.close();
+  ASSERT_TRUE(loadServerConfig(filledFile.fileName(), &server, &error)) << error.toStdString();
   ASSERT_TRUE(loadClientConfig(filledFile.fileName(), &client, &error)) << error.toStdString();
+  EXPECT_EQ(server.firmwareDir, QStringLiteral("local/data/firmware"));
   EXPECT_EQ(client.dataDir, QStringLiteral("local/device/DEV-001"));
   EXPECT_EQ(server.protocol.reconnectBackoffMs, ProtocolParams().reconnectBackoffMs);
   // 分片下载的三个参数：模板里写的是协议第 8 节的默认值

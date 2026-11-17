@@ -3,7 +3,7 @@
 #include <QTemporaryDir>
 #include <gtest/gtest.h>
 
-#include "client/security/fsk_public_key.h"
+#include "common/security/fsk_public_key.h"
 #include "test_device.h"
 
 using namespace fwds;

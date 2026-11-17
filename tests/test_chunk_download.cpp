@@ -1,5 +1,5 @@
 // 分片下载与断点续传的联调：真实 TLS、真实 TcpServer / TcpClient，
-// 服务端 FirmwareRepo + ChunkService，设备端 Downloader + ResumeStore。
+// 服务端 FirmwareRepo（经 AdminService 导入）+ ChunkService，设备端 Downloader + ResumeStore。
 // 对应测试报告 FT-05（分片正确性）、FT-06（断点续传）、ST-11（越权与越界请求）。
 // 服务端和设备在同一个线程的同一个事件循环里跑：只要有一处阻塞等待，这些用例就会卡死超时。
 #include <QFile>
@@ -90,8 +90,6 @@ struct Server {
   }
 
   std::unique_ptr<TlsChannelSecurity> security = sharedPki().pki.security(sharedPki().server);
-  ManifestVerifier verifier = trustedVerifier();
-  FirmwareRepo repo{verifier};
   ServerConfig config;
   std::unique_ptr<TcpServer> server;
   std::unique_ptr<LoginHandler> login;
@@ -165,12 +163,8 @@ struct Device {
 class ChunkDownload : public ::testing::Test {
  protected:
   ChunkDownload() { backend.registerDevice(sharedPki().dev001); }
-  StoredPackage import(Server* fx, const PackageFile& file) {
-    StoredPackage package;
-    QString error;
-    EXPECT_EQ(fx->repo.import(file.path, &package, &error), PackageCheck::Ok) << error.toStdString();
-    return package;
-  }
+  // 走真实的入库流程：维护员经 AdminService 导入，固件库复制、检查、登记
+  StoredPackage import(Server*, const PackageFile& file) { return backend.importFirmware(file.path); }
   const QString kDev1 = QStringLiteral("DEV-001");
   QTemporaryDir dir;
   fwds_test::ServerBackend backend;
@@ -210,10 +204,9 @@ TEST_F(ChunkDownload, TamperedPackageIsNotImported) {
   ASSERT_TRUE(f.seek(f.size() - 5));
   f.write("X", 1);
   f.close();
-  StoredPackage package;
   QString error;
-  EXPECT_EQ(fx.repo.import(file.path, &package, &error), PackageCheck::ImageMismatch);
-  EXPECT_FALSE(fx.repo.find(file.manifest.pkgId, &package));
+  EXPECT_FALSE(backend.admin.importFirmware(file.path, &error));
+  EXPECT_FALSE(backend.firmware.find(file.manifest.pkgId, nullptr));
 }
 
 // 离线设备不下发：assign 返回 false，设备之后上线也不会收到通知（不缓存、不盲发）
@@ -299,8 +292,9 @@ TEST_F(ChunkDownload, SurvivesServerRestart) {
   EXPECT_LT(doneWhileDown, 60);
 
   // 服务端恢复。重启后下发记录不在了（发布恢复为“已暂停”），设备上线后不会自动收到通知
+  // 固件库登记在数据库里，不用重新导入
   fx = std::make_unique<Server>(&backend, port);
-  package = import(fx.get(), file);
+  ASSERT_TRUE(backend.firmware.find(file.manifest.pkgId, &package));
   ASSERT_TRUE(waitFor([&]() { return dev.online() && fx->sessionOf(kDev1); }, 5000));
   spin(100);
   EXPECT_EQ(dev.store.bitmap().doneCount(), doneWhileDown);

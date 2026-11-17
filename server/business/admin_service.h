@@ -2,7 +2,8 @@
 // 它记着“当前登录的是谁”，每个操作先用 authorize() 核对角色权限再执行：
 //   - 界面按角色隐藏没有权限的入口（第一次检查）；
 //   - 即使绕过界面直接调这里的函数，角色不符也会被拒绝并记录（第二次检查，用例 ST-12）。
-// DeviceRegistry、DispatchGate 里改数据的函数是私有的，只对本类开放，别处想绕也绕不过去。
+// DeviceRegistry、DispatchGate、FirmwareRepo、RolloutManager 里改数据的函数是私有的，
+// 只对本类开放，别处想绕也绕不过去。
 // 每次操作（无论成功、失败还是被拒）都写一条 fwds.audit 日志：谁、做什么、对象、结果。
 #pragma once
 
@@ -11,6 +12,8 @@
 #include "common/security/cert_verifier.h"
 #include "server/business/device_registry.h"
 #include "server/business/dispatch_gate.h"
+#include "server/business/firmware_repo.h"
+#include "server/business/rollout_manager.h"
 #include "server/security/operator_auth.h"
 
 namespace fwds {
@@ -23,6 +26,9 @@ class AdminService : public QObject {
 
   // 注册设备时用来校验导入的证书（签发链、有效期、吊销状态）。由 main 设置。
   void setCertVerifier(const CertVerifier* verifier) { verifier_ = verifier; }
+  // 固件库和发布模块。由 main 设置；没有设置时对应的操作一律失败。
+  void setFirmwareRepo(FirmwareRepo* firmware) { firmware_ = firmware; }
+  void setRolloutManager(RolloutManager* rollout) { rollout_ = rollout; }
 
   // ---- 首次运行：账号表为空时创建第一个维护员 ----
   bool needsBootstrap() const;
@@ -48,6 +54,14 @@ class AdminService : public QObject {
                       QString* error);
   bool setDeviceDisabled(const QString& deviceId, bool disabled, QString* error);
   bool setDeviceGroup(const QString& deviceId, const QString& groupTag, QString* error);
+
+  // ---- 固件库（维护员）----
+  // 导入一个 .fwpkg：服务端整包检查（验签、逐片哈希、整镜像哈希）通过才入库。
+  bool importFirmware(const QString& path, QString* error);
+
+  // ---- 下发（操作员）----
+  // 把固件库里的一个包下发给一台在线设备。“允许下发”开关和互锁在 RolloutManager 里裁决。
+  bool dispatchFirmware(const QString& pkgId, const QString& deviceId, QString* error);
 
   // ---- “允许下发”开关（维护员）----
   bool setDispatchEnabled(bool enabled, QString* error);
@@ -75,6 +89,8 @@ class AdminService : public QObject {
   DeviceRegistry* registry_;
   DispatchGate* gate_;
   const CertVerifier* verifier_ = nullptr;
+  FirmwareRepo* firmware_ = nullptr;
+  RolloutManager* rollout_ = nullptr;
   bool loggedIn_ = false;
   OperatorAccount current_;
 };
