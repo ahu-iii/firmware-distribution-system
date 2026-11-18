@@ -15,6 +15,7 @@
 #include "server/ui/audit_page.h"
 #include "server/ui/device_page.h"
 #include "server/ui/firmware_page.h"
+#include "server/ui/log_page.h"
 #include "server/ui/login_dialog.h"
 #include "server/ui/release_page.h"
 
@@ -82,10 +83,11 @@ MainWindow::MainWindow(TcpServer* server, DeviceRegistry* registry, AdminService
     admin_->logout();
     promptLogin();
   });
-  // 切到“账号管理”“审计日志”页时重新读一次（锁定状态、新的日志随时会变）
+  // 切到“账号管理”“审计日志”“运行日志”页时重新读一次（锁定状态、新的日志随时会变）
   connect(tabs_, &QTabWidget::currentChanged, this, [this](int index) {
     if (tabs_->widget(index) == accountPage_) accountPage_->refresh();
     if (tabs_->widget(index) == auditPage_) auditPage_->refresh();
+    if (logPage_ && tabs_->widget(index) == logPage_) logPage_->refresh();
   });
   connect(admin_, &AdminService::sessionChanged, this, &MainWindow::applySession);
   connect(registry_, &DeviceRegistry::deviceChanged, this, &MainWindow::updateSummary);
@@ -100,6 +102,13 @@ MainWindow::MainWindow(TcpServer* server, DeviceRegistry* registry, AdminService
 }
 
 void MainWindow::setEventStore(EventStore* events) { devicePage_->setEventStore(events); }
+
+void MainWindow::setRunLog(const LogFileParams& logFile, const QString& name) {
+  if (logPage_) return;
+  logPage_ = new LogPage(registry_, logFile, name, this);
+  // 排在三个业务页之后、按角色出现的“账号管理”“审计日志”之前
+  tabs_->insertTab(3, logPage_, QStringLiteral("运行日志"));
+}
 
 void MainWindow::promptLogin() {
   stack_->setCurrentIndex(0);

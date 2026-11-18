@@ -75,6 +75,12 @@ int main(int argc, char* argv[]) {
     return 2;
   }
   fwds::initLogging(config.logLevel);
+  // 运行日志同时写进文件（按大小轮转），“运行日志”页从这些文件里检索
+  const QString logName = QStringLiteral("fwds-server");  // 日志文件名 fwds-server.log
+  if (!fwds::openLogFile(config.logFile, logName, &error)) {
+    qCCritical(fwds::lcApp).noquote() << error;
+    return 2;
+  }
 
   const std::unique_ptr<fwds::TlsChannelSecurity> security =
       makeChannelSecurity(config.tls, &error);
@@ -177,6 +183,7 @@ int main(int argc, char* argv[]) {
     window = std::make_unique<fwds::MainWindow>(&server, &registry, &admin, &dispatchGate,
                                                 &firmwareRepo, &rollout, &auditService);
     window->setEventStore(&eventStore);
+    window->setRunLog(config.logFile, logName);
     window->show();
     QTimer::singleShot(0, window.get(), &fwds::MainWindow::promptLogin);
   }
