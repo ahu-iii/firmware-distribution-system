@@ -56,8 +56,18 @@ bool TlsChannelSecurity::loadFiles(const TlsConfig& config, const SecureBuffer& 
 bool TlsChannelSecurity::load(const QByteArray& caPem, const QByteArray& crlPem,
                               const QByteArray& certPem, const SecureBuffer& keyPkcs8,
                               QString* error) {
-  if (!QSslSocket::supportsSsl()) {
-    *error = QStringLiteral("Qt 找不到 OpenSSL 运行库，无法建立 TLS");
+  // Qt 在 Windows 上还带 Schannel、在 macOS 上还带 Secure Transport 两个系统 TLS 后端，
+  // 找不到 OpenSSL 运行库时会悄悄换成它们。它们不支持这里要求的“只开一个套件、只用 X25519”，
+  // 所以只认 OpenSSL 后端，而且必须是 3.x，否则不启动网络（不降级凑合）。
+  const QString backend = QSslSocket::activeBackend();
+  if (backend != QStringLiteral("openssl") || !QSslSocket::supportsSsl()) {
+    *error = QStringLiteral("Qt 没有加载 OpenSSL 运行库（当前 TLS 后端：%1），无法建立 TLS")
+                 .arg(backend.isEmpty() ? QStringLiteral("无") : backend);
+    return false;
+  }
+  if (QSslSocket::sslLibraryVersionNumber() < 0x30000000L) {
+    *error = QStringLiteral("Qt 加载的 OpenSSL 版本过低：%1，需要 3.x")
+                 .arg(QSslSocket::sslLibraryVersionString());
     return false;
   }
   if (!verifier_.loadCa(caPem, error) || !verifier_.loadCrl(crlPem, error)) return false;

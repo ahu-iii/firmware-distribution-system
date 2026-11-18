@@ -23,7 +23,8 @@ class LogBus : public QObject {
   Q_OBJECT
  signals:
   // alert 为 true 表示这是一条安全告警（界面标红），false 是普通的管理操作记录。
-  void event(const QString& time, bool alert, const QString& text);
+  // 信号不叫 event：QObject 已有虚函数 event(QEvent*)，同名会把它遮住（clang 报 -Woverloaded-virtual）
+  void logEvent(const QString& time, bool alert, const QString& text);
 };
 LogBus* logBus();
 
