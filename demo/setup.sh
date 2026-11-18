@@ -14,9 +14,13 @@ source "$(dirname "$0")/lib.sh"
 
 need_bins
 if [ -e "$D" ]; then
-  stop_all 2>/dev/null || true
-  read -r -p "$D 已存在，重新生成会删除其中的证书、密钥和数据。继续？(y/N) " ans
-  [ "$ans" = y ] || [ "$ans" = Y ] || exit 0
+  ans=
+  read -r -p "$D 已存在，重新生成会删除其中的证书、密钥和数据。继续？(y/N) " ans || true
+  if [ "$ans" != y ] && [ "$ans" != Y ]; then
+    echo "没有改动。"
+    exit 0
+  fi
+  stop_all 2>/dev/null || true   # 确认之后才停正在运行的演示进程
   rm -rf "$D"
 fi
 mkdir -p "$D"/{conf,img,fw,lic,run,logs}
