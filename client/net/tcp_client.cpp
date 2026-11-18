@@ -190,7 +190,13 @@ void TcpClient::sendHeartbeat() {
     dropConnection(QStringLiteral("心跳应答超时"));
     return;
   }
-  channel_->sendJson(MsgType::Heartbeat, heartbeatProvider_ ? heartbeatProvider_() : QJsonObject());
+  // 协议 5.3 节要求 state、progress、uptime 三个字段，格式不对服务端回 1005 并丢弃。
+  // 业务层没设置（只有网络层单元测试会这样）时报“空闲、没有进度”
+  QJsonObject body = heartbeatProvider_ ? heartbeatProvider_() : QJsonObject();
+  if (!body.contains(QStringLiteral("state"))) body.insert(QStringLiteral("state"), QStringLiteral("IDLE"));
+  if (!body.contains(QStringLiteral("progress"))) body.insert(QStringLiteral("progress"), -1);
+  if (!body.contains(QStringLiteral("uptime"))) body.insert(QStringLiteral("uptime"), 0);
+  channel_->sendJson(MsgType::Heartbeat, body);
 }
 
 bool TcpClient::send(MsgType type, const QByteArray& body) {

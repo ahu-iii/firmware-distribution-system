@@ -66,6 +66,22 @@ QString packageIdFromBytes(const QByteArray& bytes) {
   return hex;
 }
 
+bool parseHeartbeat(const QByteArray& body, HeartbeatStatus* out) {
+  QJsonObject obj;
+  qint64 progress = 0;
+  qint64 uptime = 0;
+  QString state;
+  if (!parseObject(body, &obj) || !readString(obj, "state", &state) || state.isEmpty() ||
+      state.size() > 32 || !readInteger(obj, "progress", -1, 100, &progress) ||
+      !readInteger(obj, "uptime", 0, std::numeric_limits<qint64>::max() / 2, &uptime)) {
+    return false;
+  }
+  out->state = state;
+  out->progress = static_cast<int>(progress);
+  out->uptime = uptime;
+  return true;
+}
+
 QByteArray encodeUpdateNotify(const UpdateNotify& notify) {
   QJsonObject obj;
   obj.insert(QStringLiteral("device_id"), notify.deviceId);

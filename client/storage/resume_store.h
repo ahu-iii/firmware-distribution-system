@@ -12,6 +12,7 @@
 #include <QByteArray>
 #include <QFile>
 #include <QString>
+#include <functional>
 
 #include "client/storage/chunk_bitmap.h"
 #include "common/manifest.h"
@@ -29,7 +30,8 @@ class ResumeStore {
   //   - 有同一个包、同一份 manifest 的断点记录：载入位图，接着下；
   //   - 没有断点记录，或 manifest 哈希变了（固件已更换）：丢弃旧进度，从头开始。
   // 目录里其他包留下的文件一并删除（同一时间只下载一个包）。
-  // 磁盘空间不够或文件无法创建时返回 false。
+  // 磁盘空间不够或文件无法创建时返回 false。“空间够”指可用空间不少于
+  // “还没下载的部分 + 一整个镜像”：下载缓存要写满，校验通过后还要再写一份到非活动分区。
   bool open(const Manifest& manifest, const QByteArray& manifestRaw, QString* error);
 
   bool isOpen() const { return part_.isOpen(); }
@@ -53,6 +55,10 @@ class ResumeStore {
   // 关闭并删除 .part 和断点记录（升级被取消、分片多次校验失败）。
   void discard();
 
+  // 查询某个目录所在磁盘的可用字节数。默认用 QStorageInfo；单元测试换成固定值模拟磁盘快满。
+  using FreeSpaceProbe = std::function<qint64(const QString& dir)>;
+  void setFreeSpaceProbe(FreeSpaceProbe probe) { freeSpace_ = std::move(probe); }
+
   const ChunkBitmap& bitmap() const { return bitmap_; }
   QString partPath() const { return part_.fileName(); }
   QString statePath() const { return statePath_; }
@@ -70,6 +76,7 @@ class ResumeStore {
   QString statePath_;
   ChunkBitmap bitmap_;
   int unsavedChunks_ = 0;      // 上次落盘之后又完成了几片
+  FreeSpaceProbe freeSpace_;
 };
 
 }  // namespace fwds

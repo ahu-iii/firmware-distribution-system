@@ -52,8 +52,23 @@ add_executable(fwds-tests
   test_demo_panel.cpp
   test_device_audit.cpp
   test_events.cpp
+  test_device_page.cpp
+  # 服务端界面里有单元测试的部分（设备监控页、灰度发布页、固件页）。界面代码只编进 fwds-server，这里单独加入
+  ../server/ui/device_page.h
+  ../server/ui/device_page.cpp
+  ../server/ui/device_table_model.h
+  ../server/ui/device_table_model.cpp
+  ../server/ui/event_dialog.h
+  ../server/ui/event_dialog.cpp
+  ../server/ui/release_page.h
+  ../server/ui/release_page.cpp
+  ../server/ui/firmware_page.h
+  ../server/ui/firmware_page.cpp
+  ../server/ui/login_dialog.h
+  ../server/ui/login_dialog.cpp
 )
-target_link_libraries(fwds-tests PRIVATE fwds_server_lib fwds_client_lib fwds_signer_lib GTest::gtest)
+target_link_libraries(fwds-tests PRIVATE fwds_server_lib fwds_client_lib fwds_signer_lib Qt6::Widgets
+                      GTest::gtest)
 
 include(GoogleTest)
 # 用例列表在 ctest 运行时再取（PRE_TEST），不在构建时运行测试程序：Windows 上 Qt 和 OpenSSL 的

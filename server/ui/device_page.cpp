@@ -19,6 +19,7 @@
 #include <QSplitter>
 #include <QStyledItemDelegate>
 #include <QTableView>
+#include <QTimer>
 #include <QVBoxLayout>
 
 #include "common/log.h"
@@ -84,14 +85,25 @@ DevicePage::DevicePage(DeviceRegistry* registry, AdminService* admin, QWidget* p
   table_->setSelectionMode(QAbstractItemView::SingleSelection);
   table_->setEditTriggers(QAbstractItemView::NoEditTriggers);
   table_->verticalHeader()->setVisible(false);
-  table_->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
+  // 列宽按内容调整，但不用 ResizeToContents：那样每来一条进度都要把所有行重新量一遍，
+  // 几十台设备同时升级时界面会卡住好几秒（测试报告 BUG-006）。改成设备表变化后最多每秒量一次。
+  table_->horizontalHeader()->setSectionResizeMode(QHeaderView::Interactive);
   table_->horizontalHeader()->setSectionResizeMode(DeviceTableModel::ColProgress,
                                                    QHeaderView::Stretch);
   table_->horizontalHeader()->setMinimumSectionSize(70);
+  fitTimer_ = new QTimer(this);
+  fitTimer_->setSingleShot(true);
+  fitTimer_->setInterval(kColumnFitIntervalMs);
+  connect(fitTimer_, &QTimer::timeout, table_, &QTableView::resizeColumnsToContents);
   connect(table_->selectionModel(), &QItemSelectionModel::selectionChanged, this,
           &DevicePage::updateButtons);
   connect(model_, &QAbstractItemModel::dataChanged, this, &DevicePage::updateButtons);
   connect(model_, &QAbstractItemModel::modelReset, this, &DevicePage::updateButtons);
+  connect(model_, &QAbstractItemModel::dataChanged, this, [this]() {
+    if (!fitTimer_->isActive()) fitTimer_->start();  // 一秒内的多次变化合并成一次
+  });
+  connect(model_, &QAbstractItemModel::modelReset, table_, &QTableView::resizeColumnsToContents);
+  table_->resizeColumnsToContents();
 
   // ---- 安全告警与操作记录 ----
   events_ = new QListWidget(this);

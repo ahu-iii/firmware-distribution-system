@@ -4,6 +4,7 @@
 #include <QJsonObject>
 
 #include "common/log.h"
+#include "common/update_messages.h"
 
 namespace fwds {
 
@@ -33,11 +34,10 @@ void HeartbeatMonitor::onSessionStateChanged(Session* session) {
 }
 
 void HeartbeatMonitor::onHeartbeat(Session* session, const QByteArray& body) {
-  // 心跳内容只用于界面显示，格式不对就当作没有上报，不影响连接
-  const QJsonObject status = QJsonDocument::fromJson(body).object();
-  const QString state = status.value(QStringLiteral("state")).toString().left(32);
-  const int progress = qBound(-1, status.value(QStringLiteral("progress")).toInt(-1), 100);
-  registry_->markHeartbeat(session->deviceId(), state, progress);
+  // 格式不对的心跳 Session 已经回了 1005 并丢弃，到这里的一定能解析
+  HeartbeatStatus status;
+  if (!parseHeartbeat(body, &status)) return;
+  registry_->markHeartbeat(session->deviceId(), status.state, status.progress);
 }
 
 void HeartbeatMonitor::onSessionClosed(Session* session, const QString& reason) {
