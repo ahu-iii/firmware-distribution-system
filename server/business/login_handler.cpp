@@ -142,9 +142,19 @@ void LoginHandler::handle(Session* session, const QByteArray& body) {
   result.insert(QStringLiteral("session_id"), newSessionId());
   result.insert(QStringLiteral("heartbeat_interval"), params_.heartbeatIntervalMs / 1000);
   result.insert(QStringLiteral("server_time"), now);
-  // 该设备已连续收到的最大事件序号。EventStore 实现之前注册表里一直是 0
-  result.insert(QStringLiteral("event_ack"), record.eventAck);
-  session->setEventAck(record.eventAck);
+  // 该设备已连续收到的最大事件序号。设备报告的 event_base（它已确认删除到哪里）比这个大时，
+  // EventStore 先对账（协议 5.1、5.7 节）。event_base 是可选字段，格式不对按 0 处理
+  qint64 eventAck = record.eventAck;
+  if (events_) {
+    const double base = login.value(QStringLiteral("event_base")).toDouble(0);
+    const qint64 eventBase =
+        (base >= 0 && base <= 9007199254740992.0 && base == static_cast<qint64>(base))
+            ? static_cast<qint64>(base)
+            : 0;
+    eventAck = events_->reconcileOnLogin(deviceId, eventBase);
+  }
+  result.insert(QStringLiteral("event_ack"), eventAck);
+  session->setEventAck(eventAck);
   session->acceptLogin(result);
   qCInfo(lcNet) << "session" << session->id() << deviceId << "login ok";
 }

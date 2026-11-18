@@ -131,6 +131,9 @@ int main(int argc, char* argv[]) {
   qCWarning(fwds::lcApp) << "license check is not available in this build, LOGIN skips it";
   fwds::LoginHandler loginHandler(config.protocol, &registry, &loginThrottle, licenseVerifier);
   fwds::HeartbeatMonitor heartbeatMonitor(&server, &registry);
+  // 事件入库与对账：设备上报的进度、结果、告警按 (设备, 序号) 去重入库，登录时按 event_base 对账
+  fwds::EventStore eventStore(&database, &registry, &server);
+  loginHandler.setEventStore(&eventStore);
   // 固件库：启动时把库里的每个包重新检查一遍（验签、逐片哈希、整镜像哈希）
   fwds::FirmwareRepo firmwareRepo(&database, fskVerifier, config.firmwareDir);
   if (!firmwareRepo.load(&error)) {
@@ -139,8 +142,7 @@ int main(int argc, char* argv[]) {
   }
   // 分片服务应答设备的 CHUNK_REQ；给哪台设备下发哪个包由发布模块裁决（开关、互锁）后交给它
   fwds::ChunkService chunkService(&server, config.protocol);
-  // 灰度发布：设备的升级结果、进度、告警由事件入库模块（EventStore，事件补传对账一步）
-  // 去重入库后转给 RolloutManager 的 onDeviceResult / onDeviceProgress / onDeviceAlert
+  // 灰度发布：发布状态机、互锁、并发控制（设计 4.2 节）
   fwds::RolloutManager rollout(&database, config.protocol, config.rollout, &registry, &firmwareRepo,
                                &chunkService, &dispatchGate);
   rollout.setAuditService(&auditService);
@@ -150,6 +152,14 @@ int main(int argc, char* argv[]) {
   }
   admin.setFirmwareRepo(&firmwareRepo);
   admin.setRolloutManager(&rollout);
+  // 设备的升级结果、进度、告警先由 EventStore 去重、按序入库，再交给发布模块推进或暂停发布。
+  // 只接入库成功的事件：重复补传的事件 EventStore 不会再发信号，发布不会被推进两次。
+  QObject::connect(&eventStore, &fwds::EventStore::resultStored, &rollout,
+                   &fwds::RolloutManager::onDeviceResult);
+  QObject::connect(&eventStore, &fwds::EventStore::progressStored, &rollout,
+                   &fwds::RolloutManager::onDeviceProgress);
+  QObject::connect(&eventStore, &fwds::EventStore::alertStored, &rollout,
+                   &fwds::RolloutManager::onDeviceAlert);
   QObject::connect(&server, &fwds::TcpServer::sessionOpened, &loginHandler,
                    [&loginHandler](fwds::Session* session) {
                      QObject::connect(session, &fwds::Session::loginRequested, &loginHandler,
@@ -163,6 +173,7 @@ int main(int argc, char* argv[]) {
   if (!headless) {
     window = std::make_unique<fwds::MainWindow>(&server, &registry, &admin, &dispatchGate,
                                                 &firmwareRepo, &rollout, &auditService);
+    window->setEventStore(&eventStore);
     window->show();
     QTimer::singleShot(0, window.get(), &fwds::MainWindow::promptLogin);
   }

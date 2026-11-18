@@ -37,12 +37,9 @@ class Rollout : public ::testing::Test {
     return manifest.pkgId;
   }
 
-  // 启动一台设备，它的升级结果交给服务端的发布模块（代替事件上报）。
-  std::unique_ptr<LiveDevice> startDevice(LiveServer& fx, const Identity& identity,
-                                          const QString& id, const QString& pkgId) {
-    auto dev = std::make_unique<LiveDevice>(fx.port(), identity, id, dir.filePath(id));
-    dev->reportResultsTo(fx.rollout.get(), pkgId);
-    return dev;
+  // 启动一台设备。它的升级结果经事件上报（outbox → EventStore）交给服务端的发布模块。
+  std::unique_ptr<LiveDevice> startDevice(LiveServer& fx, const Identity& identity, const QString& id) {
+    return std::make_unique<LiveDevice>(fx.port(), identity, id, dir.filePath(id));
   }
 
   // 设备已登录，并且至少上报过一次心跳。
@@ -102,9 +99,9 @@ class Rollout : public ::testing::Test {
 TEST_F(Rollout, CanaryThenFullRollout) {
   LiveServer fx(&backend);
   const QString pkg = importFirmware(QStringLiteral("2.1.0"), 5);
-  auto d1 = startDevice(fx, sharedPki().dev001, kDev1, pkg);
-  auto d2 = startDevice(fx, sharedPki().dev002, kDev2, pkg);
-  auto d3 = startDevice(fx, sharedPki().dev003, kDev3, pkg);
+  auto d1 = startDevice(fx, sharedPki().dev001, kDev1);
+  auto d2 = startDevice(fx, sharedPki().dev002, kDev2);
+  auto d3 = startDevice(fx, sharedPki().dev003, kDev3);
   ASSERT_TRUE(ready(kDev1) && ready(kDev2) && ready(kDev3));
   backend.openGateAndLoginAsOperator();
 
@@ -138,8 +135,12 @@ TEST_F(Rollout, CanaryThenFullRollout) {
   EXPECT_TRUE(audited(QStringLiteral("发布 #%1：观察期内无失败、无告警，待确认全量").arg(id)));
   // 操作员的操作记着来源主机（服务端界面所在的主机），设备上报的结果记着设备的地址
   for (const AuditEntry& e : backend.audit.recent(500, audit::kRollout)) {
-    if (e.actor == QStringLiteral("oper")) EXPECT_EQ(e.source, AuditService::localSource());
-    if (e.actor == kDev2) EXPECT_EQ(e.source, QStringLiteral("127.0.0.1"));
+    if (e.actor == QStringLiteral("oper")) {
+      EXPECT_EQ(e.source, AuditService::localSource());
+    }
+    if (e.actor == kDev2) {
+      EXPECT_EQ(e.source, QStringLiteral("127.0.0.1"));
+    }
   }
   EXPECT_TRUE(backend.audit.verify().ok);
 }
@@ -149,8 +150,8 @@ TEST_F(Rollout, CanaryThenFullRollout) {
 TEST_F(Rollout, CanaryFailurePausesRelease) {
   LiveServer fx(&backend);
   const QString pkg = importFirmware(QStringLiteral("2.1.0"), 5, true);
-  auto d1 = startDevice(fx, sharedPki().dev001, kDev1, pkg);
-  auto d2 = startDevice(fx, sharedPki().dev002, kDev2, pkg);
+  auto d1 = startDevice(fx, sharedPki().dev001, kDev1);
+  auto d2 = startDevice(fx, sharedPki().dev002, kDev2);
   ASSERT_TRUE(ready(kDev1) && ready(kDev2));
   backend.openGateAndLoginAsOperator();
 
@@ -180,8 +181,8 @@ TEST_F(Rollout, InterlocksRejectConflicts) {
   LiveServer fx(&backend);
   const QString pkgA = importFirmware(QStringLiteral("2.1.0"), 5, false, 30);
   const QString pkgB = importFirmware(QStringLiteral("2.2.0"), 6);
-  auto d1 = startDevice(fx, sharedPki().dev001, kDev1, pkgA);
-  auto d2 = startDevice(fx, sharedPki().dev002, kDev2, pkgA);
+  auto d1 = startDevice(fx, sharedPki().dev001, kDev1);
+  auto d2 = startDevice(fx, sharedPki().dev002, kDev2);
   ASSERT_TRUE(ready(kDev1) && ready(kDev2));
   backend.openGateAndLoginAsOperator();
 
@@ -215,7 +216,7 @@ TEST_F(Rollout, InterlocksRejectConflicts) {
 TEST_F(Rollout, WrongPasswordDoesNothing) {
   LiveServer fx(&backend);
   const QString pkg = importFirmware(QStringLiteral("2.1.0"), 5);
-  auto d1 = startDevice(fx, sharedPki().dev001, kDev1, pkg);
+  auto d1 = startDevice(fx, sharedPki().dev001, kDev1);
   ASSERT_TRUE(ready(kDev1));
   backend.openGateAndLoginAsOperator();
 
@@ -235,9 +236,9 @@ TEST_F(Rollout, WrongPasswordDoesNothing) {
 TEST_F(Rollout, EmergencyStopCancelsDevices) {
   LiveServer fx(&backend);
   const QString pkg = importFirmware(QStringLiteral("2.1.0"), 5, false, 200);  // 大一点，下载要一会儿
-  auto d1 = startDevice(fx, sharedPki().dev001, kDev1, pkg);
-  auto d2 = startDevice(fx, sharedPki().dev002, kDev2, pkg);
-  auto d3 = startDevice(fx, sharedPki().dev003, kDev3, pkg);
+  auto d1 = startDevice(fx, sharedPki().dev001, kDev1);
+  auto d2 = startDevice(fx, sharedPki().dev002, kDev2);
+  auto d3 = startDevice(fx, sharedPki().dev003, kDev3);
   ASSERT_TRUE(ready(kDev1) && ready(kDev2) && ready(kDev3));
   ASSERT_TRUE(backend.auth.createAccount(QStringLiteral("auditor"), Role::Auditor,
                                          pwd("Audit-pass-01"), false, &error));
@@ -276,8 +277,8 @@ TEST_F(Rollout, EmergencyStopCancelsDevices) {
 TEST_F(Rollout, OfflineDeviceIsHeldUntilConfirmed) {
   LiveServer fx(&backend);
   const QString pkg = importFirmware(QStringLiteral("2.1.0"), 5);
-  auto d1 = startDevice(fx, sharedPki().dev001, kDev1, pkg);
-  auto d3 = startDevice(fx, sharedPki().dev003, kDev3, pkg);
+  auto d1 = startDevice(fx, sharedPki().dev001, kDev1);
+  auto d3 = startDevice(fx, sharedPki().dev003, kDev3);
   ASSERT_TRUE(ready(kDev1) && ready(kDev3));
   backend.openGateAndLoginAsOperator();
 
@@ -291,7 +292,7 @@ TEST_F(Rollout, OfflineDeviceIsHeldUntilConfirmed) {
   EXPECT_EQ(state(fx, id), QStringLiteral("full"));  // 还有待确认的设备，发布没有结束
 
   // DEV-002 上线：不自动推送
-  auto d2 = startDevice(fx, sharedPki().dev002, kDev2, pkg);
+  auto d2 = startDevice(fx, sharedPki().dev002, kDev2);
   ASSERT_TRUE(ready(kDev2));
   spin(400);
   EXPECT_EQ(d2->updater->state(), Updater::State::Idle);
@@ -307,7 +308,7 @@ TEST_F(Rollout, OfflineDeviceIsHeldUntilConfirmed) {
 TEST_F(Rollout, ClosingGatePausesRelease) {
   LiveServer fx(&backend);
   const QString pkg = importFirmware(QStringLiteral("2.1.0"), 5, false, 30);
-  auto d1 = startDevice(fx, sharedPki().dev001, kDev1, pkg);
+  auto d1 = startDevice(fx, sharedPki().dev001, kDev1);
   ASSERT_TRUE(ready(kDev1));
   backend.openGateAndLoginAsOperator();
   const qint64 id = create(pkg, {kDev1});
@@ -328,7 +329,7 @@ TEST_F(Rollout, ClosingGatePausesRelease) {
 TEST_F(Rollout, SecurityAlertPausesRelease) {
   LiveServer fx(&backend);
   const QString pkg = importFirmware(QStringLiteral("2.1.0"), 5);
-  auto d1 = startDevice(fx, sharedPki().dev001, kDev1, pkg);
+  auto d1 = startDevice(fx, sharedPki().dev001, kDev1);
   ASSERT_TRUE(ready(kDev1));
   backend.openGateAndLoginAsOperator();
   const qint64 id = create(pkg, {kDev1});  // DEV-002、DEV-003 离线，在全量批里
@@ -344,9 +345,9 @@ TEST_F(Rollout, SecurityAlertPausesRelease) {
 TEST_F(Rollout, FullPhaseFailureRateAutoPauses) {
   LiveServer fx(&backend);
   const QString pkg = importFirmware(QStringLiteral("2.1.0"), 5, false, 30);
-  auto d1 = startDevice(fx, sharedPki().dev001, kDev1, pkg);
+  auto d1 = startDevice(fx, sharedPki().dev001, kDev1);
   auto d2 = std::make_unique<LiveDevice>(fx.port(), sharedPki().dev002, kDev2, dir.filePath(kDev2));
-  auto d3 = startDevice(fx, sharedPki().dev003, kDev3, pkg);
+  auto d3 = startDevice(fx, sharedPki().dev003, kDev3);
   ASSERT_TRUE(ready(kDev1) && ready(kDev2) && ready(kDev3));
   backend.openGateAndLoginAsOperator();
 
@@ -371,7 +372,7 @@ TEST_F(Rollout, FullPhaseFailureRateAutoPauses) {
 TEST_F(Rollout, ManualPauseAndResume) {
   LiveServer fx(&backend);
   const QString pkg = importFirmware(QStringLiteral("2.1.0"), 5);
-  auto d1 = startDevice(fx, sharedPki().dev001, kDev1, pkg);
+  auto d1 = startDevice(fx, sharedPki().dev001, kDev1);
   ASSERT_TRUE(ready(kDev1));
   backend.openGateAndLoginAsOperator();
   const qint64 id = create(pkg, {kDev1});

@@ -99,6 +99,8 @@ MainWindow::MainWindow(TcpServer* server, DeviceRegistry* registry, AdminService
   updateSummary();
 }
 
+void MainWindow::setEventStore(EventStore* events) { devicePage_->setEventStore(events); }
+
 void MainWindow::promptLogin() {
   stack_->setCurrentIndex(0);
   LoginDialog login(admin_, this);

@@ -27,7 +27,6 @@ const char kReleaseTargetTable[] =
     ")";
 
 // 建表语句，字段与设计 5.1 节的 ER 图一致。时间一律存 UTC 的 ISO 8601 文本。
-// 事件表在事件补传对账模块实现时加入。
 const char* const kSchema[] = {
     // 账号表：不存口令，只存派生函数名、迭代次数、盐和派生结果（设计 11.2 节）
     "CREATE TABLE IF NOT EXISTS operator ("
@@ -93,6 +92,17 @@ const char* const kSchema[] = {
     "  message   TEXT NOT NULL,"
     "  prev_hash TEXT NOT NULL,"
     "  hash      TEXT NOT NULL"
+    ")",
+    // 设备事件表（设计 4.6 节）：(device_id, event_seq) 为主键，同一序号只入库一次。
+    // 序号超过 device.event_ack 的行是“暂存”的，等设备补齐中间缺的序号
+    "CREATE TABLE IF NOT EXISTS device_event ("
+    "  device_id   TEXT NOT NULL REFERENCES device(device_id),"
+    "  event_seq   INTEGER NOT NULL,"
+    "  ts          TEXT NOT NULL,"
+    "  kind        TEXT NOT NULL CHECK (kind IN ('progress','result','alert')),"
+    "  payload     TEXT NOT NULL,"
+    "  received_at TEXT NOT NULL,"
+    "  PRIMARY KEY (device_id, event_seq)"
     ")",
 };
 

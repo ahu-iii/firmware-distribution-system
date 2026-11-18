@@ -28,6 +28,8 @@ add_library(fwds_server_lib STATIC
   business/chunk_service.cpp
   business/rollout_manager.h
   business/rollout_manager.cpp
+  business/event_store.h
+  business/event_store.cpp
   business/admin_service.h
   business/admin_service.cpp
 )
@@ -51,5 +53,7 @@ add_executable(fwds-server
   ui/release_page.cpp
   ui/audit_page.h
   ui/audit_page.cpp
+  ui/event_dialog.h
+  ui/event_dialog.cpp
 )
 target_link_libraries(fwds-server PRIVATE fwds_server_lib Qt6::Widgets)

@@ -74,7 +74,6 @@ TEST_F(Dispatch, OperatorDispatchUpgradesDevice) {
   LiveServer fx(&backend);
   const QString pkgId = importFirmware(QStringLiteral("2.1.0"), 5);
   LiveDevice dev(fx.port(), sharedPki().dev001, kDev1, dir.filePath(QStringLiteral("dev1")));
-  dev.reportResultsTo(fx.rollout.get(), pkgId);
   ASSERT_TRUE(deviceReady());
   backend.openGateAndLoginAsOperator();
 
@@ -222,7 +221,6 @@ TEST_F(Dispatch, BusyDeviceIsNotDispatchedAgain) {
   const QString first = importFirmware(QStringLiteral("2.1.0"), 5);
   const QString second = importFirmware(QStringLiteral("2.2.0"), 6);
   LiveDevice dev(fx.port(), sharedPki().dev001, kDev1, dir.filePath(QStringLiteral("dev1")));
-  dev.reportResultsTo(fx.rollout.get(), first);
   ASSERT_TRUE(deviceReady());
   backend.openGateAndLoginAsOperator();
 
@@ -239,7 +237,6 @@ TEST_F(Dispatch, BusyDeviceIsNotDispatchedAgain) {
   ASSERT_TRUE(waitFor([&]() { return reportedState() == QStringLiteral("SUCCESS"); }, 5000));
   EXPECT_EQ(fx.rollout->releases(1).first().state, QStringLiteral("done"));
   spin(3 * fastParams().heartbeatIntervalMs);
-  dev.reportResultsTo(fx.rollout.get(), second);
   ASSERT_TRUE(backend.admin.dispatchFirmware(second, kDev1, pwd("Oper-pass-01"), &error)) << error.toStdString();
   ASSERT_TRUE(waitFor([&]() { return dev.runningVersion() == QStringLiteral("2.2.0"); }, 15000));
 }
