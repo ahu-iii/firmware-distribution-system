@@ -8,6 +8,8 @@
 
 #include <QMainWindow>
 
+#include "common/log.h"
+
 #include "server/business/admin_service.h"
 
 class QCheckBox;
@@ -23,6 +25,7 @@ class AuditPage;
 class DevicePage;
 class EventStore;
 class FirmwarePage;
+class LogPage;
 class ReleasePage;
 class TcpServer;
 
@@ -38,6 +41,9 @@ class MainWindow : public QMainWindow {
 
   // 事件入库模块，交给设备监控页的“设备事件”对话框。
   void setEventStore(EventStore* events);
+
+  // 运行日志文件的位置：加上“运行日志”页（所有角色可看）。
+  void setRunLog(const LogFileParams& logFile, const QString& name);
 
  private:
   void applySession();          // 登录状态或角色变化后刷新界面
@@ -57,6 +63,7 @@ class MainWindow : public QMainWindow {
   ReleasePage* releasePage_;
   AccountPage* accountPage_;
   AuditPage* auditPage_;
+  LogPage* logPage_ = nullptr;
   QLabel* userLabel_;
   QCheckBox* dispatchBox_;
   QLabel* dispatchLabel_;

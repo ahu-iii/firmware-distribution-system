@@ -1,5 +1,5 @@
 // 联调用的服务端和设备：真实 TLS、真实 TcpServer / TcpClient。
-//   LiveServer  和 fwds-server 的 main 一样接线（登录、心跳、事件入库、分片服务、发布模块），只是没有界面
+//   LiveServer  和 fwds-server 的 main 一样接线（登录、心跳、事件入库、分片服务、发布模块、设备审计），只是没有界面
 //   LiveDevice  TcpClient + 完整的升级状态机 Updater（A/B 分区、Bootloader）+ 事件 outbox，出厂固件 2.0.0
 // 设备的升级结果走真实链路：Updater → EventReporter → EventOutbox → RESULT 帧 → EventStore → RolloutManager。
 #pragma once
@@ -18,6 +18,7 @@
 #include "server/business/heartbeat_monitor.h"
 #include "server/business/login_handler.h"
 #include "server/business/rollout_manager.h"
+#include "server/security/device_audit.h"
 #include "server/net/tcp_server.h"
 #include "tests/test_device.h"
 #include "tests/test_server_env.h"
@@ -64,6 +65,8 @@ struct LiveServer {
                      &RolloutManager::onDeviceProgress);
     QObject::connect(events.get(), &EventStore::alertStored, rollout.get(),
                      &RolloutManager::onDeviceAlert);
+    deviceAudit = std::make_unique<DeviceAudit>(server.get(), events.get(), &backend->registry,
+                                                &backend->audit);
     QObject::connect(server.get(), &TcpServer::sessionOpened, [this](Session* s) {
       QObject::connect(s, &Session::loginRequested, login.get(), &LoginHandler::handle);
     });
@@ -81,6 +84,7 @@ struct LiveServer {
   std::unique_ptr<EventStore> events;
   std::unique_ptr<ChunkService> chunks;
   std::unique_ptr<RolloutManager> rollout;
+  std::unique_ptr<DeviceAudit> deviceAudit;
 };
 
 // 一台设备：TcpClient + Updater + EventOutbox，接线方式和 fwds-client 的 main 一样。出厂固件 2.0.0（安全版本号 4）。
@@ -125,6 +129,9 @@ struct LiveDevice {
     QObject::connect(updater.get(), &Updater::rebootFinished, client.get(), [this]() { client->start(); });
     QObject::connect(updater.get(), &Updater::alertRaised,
                      [this](int code, const QString&) { alerts.append(code); });
+    QObject::connect(client.get(), &TcpClient::frameReceived, [this](const Frame& frame) {
+      if (static_cast<MsgType>(frame.type) == MsgType::UpdateNotify) ++notifies;
+    });
     QObject::connect(updater.get(), &Updater::finished,
                      [this](const QString& result, int code, const QString& detail) {
                        Q_UNUSED(code);
@@ -159,6 +166,7 @@ struct LiveDevice {
   std::unique_ptr<EventReporter> reporter;
   QList<int> alerts;
   QStringList results;
+  int notifies = 0;  // 收到过几次 UPDATE_NOTIFY
 };
 
 }  // namespace fwds_test
