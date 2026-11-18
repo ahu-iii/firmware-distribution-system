@@ -7,6 +7,8 @@
 #include <QProgressBar>
 #include <QVBoxLayout>
 
+#include "client/ui/demo_panel.h"
+
 namespace fwds {
 
 namespace {
@@ -43,7 +45,7 @@ MainWindow::MainWindow(const ClientConfig& config, TcpClient* client, Updater* u
                        EventOutbox* outbox, QWidget* parent)
     : QMainWindow(parent), updater_(updater), outbox_(outbox) {
   setWindowTitle(QStringLiteral("设备客户端 %1").arg(config.deviceId));
-  resize(600, 480);
+  resize(640, 540);
 
   auto* central = new QWidget(this);
   auto* layout = new QVBoxLayout(central);
@@ -71,6 +73,9 @@ MainWindow::MainWindow(const ClientConfig& config, TcpClient* client, Updater* u
   layout->addLayout(form);
   showFirmware();
   showOutbox();
+
+  auto* demo = new DemoPanel(config.dataDir, client, updater, central);
+  layout->addWidget(demo);
 
   log_ = new QPlainTextEdit(central);
   log_->setReadOnly(true);
@@ -107,6 +112,7 @@ MainWindow::MainWindow(const ClientConfig& config, TcpClient* client, Updater* u
     appendLog(QStringLiteral("安全告警 %1：%2").arg(code).arg(detail));
   });
   connect(outbox, &EventOutbox::changed, this, &MainWindow::showOutbox);
+  connect(demo, &DemoPanel::actionLogged, this, &MainWindow::appendLog);
 }
 
 void MainWindow::showOutbox() {

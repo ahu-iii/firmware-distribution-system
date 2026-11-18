@@ -1,4 +1,9 @@
 find_package(OpenSSL 3.0 REQUIRED)
+# “3.0 以上”也会接受 4.x，这里限定大版本必须是 3
+if(NOT OPENSSL_VERSION VERSION_LESS 4.0)
+  message(FATAL_ERROR "找到的 OpenSSL 是 ${OPENSSL_VERSION}（${OPENSSL_INCLUDE_DIR}），本项目需要 3.x。"
+                      "macOS 上 brew install openssl@3；其他平台用 -DOPENSSL_ROOT_DIR=<OpenSSL 3 目录> 指定")
+endif()
 
 add_library(fwds_common STATIC
   protocol.h
@@ -48,6 +53,25 @@ add_library(fwds_common STATIC
   security/key_store.cpp
   security/tls_channel.h
   security/tls_channel.cpp
+  security/license.h
+  security/license.cpp
+  security/exe_signature.h
+  security/exe_signature.cpp
+  obfuscated_string.h
+  shutdown_signal.h
+  shutdown_signal.cpp
 )
 target_include_directories(fwds_common PUBLIC ${CMAKE_SOURCE_DIR})
+# OpenSSL 3 的头文件目录排在最前面：Homebrew 的 Qt 会带上 /opt/homebrew/include，
+# 那里可能是另一版 OpenSSL（openssl@4）的头文件，不能让编译器先找到它们
+target_include_directories(fwds_common BEFORE PUBLIC ${OPENSSL_INCLUDE_DIR})
 target_link_libraries(fwds_common PUBLIC Qt6::Core Qt6::Network OpenSSL::Crypto)
+
+if(FWDS_REQUIRE_EXE_SIGNATURE)
+  set(FWDS_REQUIRE_EXE_SIGNATURE_BOOL true)
+else()
+  set(FWDS_REQUIRE_EXE_SIGNATURE_BOOL false)
+endif()
+# 版本号和发布版开关写进生成的头文件 build_info.h，三个程序和“关于”信息都从这里取
+configure_file(build_info.h.in ${CMAKE_BINARY_DIR}/generated/common/build_info.h @ONLY)
+target_include_directories(fwds_common PUBLIC ${CMAKE_BINARY_DIR}/generated)

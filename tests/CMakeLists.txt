@@ -29,6 +29,7 @@ add_executable(fwds-tests
   test_device_login.cpp
   test_fsk.h
   test_rsa_pss.cpp
+  test_software_protection.cpp
   test_manifest.cpp
   test_manifest_verifier.cpp
   test_firmware_package.cpp
@@ -47,6 +48,9 @@ add_executable(fwds-tests
   test_dispatch.cpp
   test_rollout.cpp
   test_audit.cpp
+  test_run_log.cpp
+  test_demo_panel.cpp
+  test_device_audit.cpp
   test_events.cpp
 )
 target_link_libraries(fwds-tests PRIVATE fwds_server_lib fwds_client_lib fwds_signer_lib GTest::gtest)

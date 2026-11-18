@@ -124,10 +124,55 @@ TEST_F(Dispatch, SelfTestFailureRollsBackAndServerSeesIt) {
     return record.online && record.upgradeState == QStringLiteral("ROLLED_BACK");
   }, 5000));
   EXPECT_EQ(record.currentVersion, QStringLiteral("2.0.0"));
-  // 设备重新登录后服务端会重发同一个包的通知，设备不会再装一遍
+  // 回滚的结果在设备重新登录后补传，排在第一个心跳前面：服务端先删了下发记录，不再重发通知
   spin(300);
   EXPECT_EQ(dev.updater->state(), Updater::State::RolledBack);
   EXPECT_EQ(dev.results.size(), 1);
+  EXPECT_EQ(dev.notifies, 1);
+  EXPECT_TRUE(fx.chunks->assignedPackage(kDev1).isEmpty());
+}
+
+// 升级成功后设备重启、重新登录，之后再断线重连几次：都不会再收到这个包的通知
+TEST_F(Dispatch, UpgradedDeviceIsNotNotifiedAgainOnRelogin) {
+  LiveServer fx(&backend);
+  const QString pkgId = importFirmware(QStringLiteral("2.1.0"), 5);
+  LiveDevice dev(fx.port(), sharedPki().dev001, kDev1, dir.filePath(QStringLiteral("dev1")));
+  ASSERT_TRUE(deviceReady());
+  backend.openGateAndLoginAsOperator();
+  ASSERT_TRUE(backend.admin.dispatchFirmware(pkgId, kDev1, pwd("Oper-pass-01"), &error)) << error.toStdString();
+  ASSERT_TRUE(waitFor([&]() { return reportedState() == QStringLiteral("SUCCESS"); }, 15000));
+
+  for (int i = 0; i < 2; ++i) {
+    dev.client->stop(QStringLiteral("test"));
+    ASSERT_TRUE(waitFor([&]() {
+      DeviceRecord record;
+      return backend.registry.find(kDev1, &record) && !record.online;
+    }));
+    dev.client->start();
+    ASSERT_TRUE(deviceReady());
+    spin(3 * fastParams().heartbeatIntervalMs);  // 过几个心跳，重发通知的时机已经过去
+  }
+  EXPECT_EQ(dev.notifies, 1);  // 只有最初下发的那一次
+  EXPECT_EQ(dev.results, QStringList{QStringLiteral("SUCCESS")});
+}
+
+// 断电后上电才回滚的设备报 ROLLED_BACK 时包 ID 为空串、发布号为 0（协议 5.7 节）：
+// 服务端按“这台设备正在升级的那一条”匹配，回写结果并删掉下发记录，以后重新登录不再通知
+TEST_F(Dispatch, PowerOnRollbackWithoutPackageIdClosesTheDispatch) {
+  LiveServer fx(&backend);
+  const QString pkgId = importFirmware(QStringLiteral("2.1.0"), 5);
+  LiveDevice dev(fx.port(), sharedPki().dev001, kDev1, dir.filePath(QStringLiteral("dev1")));
+  ASSERT_TRUE(deviceReady());
+  backend.openGateAndLoginAsOperator();
+  ASSERT_TRUE(backend.admin.dispatchFirmware(pkgId, kDev1, pwd("Oper-pass-01"), &error)) << error.toStdString();
+  ASSERT_EQ(fx.chunks->assignedPackage(kDev1), pkgId);
+
+  fx.rollout->onDeviceResult(kDev1, 0, QStringLiteral(""), QStringLiteral("ROLLED_BACK"), 3007,
+                             QStringLiteral("selftest failed"));
+  EXPECT_TRUE(fx.chunks->assignedPackage(kDev1).isEmpty());
+  const QList<DispatchRecord> records = fx.rollout->recentDispatches(10);
+  ASSERT_EQ(records.size(), 1);
+  EXPECT_EQ(records.first().targetStatus, QStringLiteral("rolled_back"));
 }
 
 // ST-21：服务端下发一份签名合法的旧固件（1.9.0，安全版本号 3）。服务端不拦——防降级由设备把关：

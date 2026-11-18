@@ -134,15 +134,20 @@ TEST_F(Rollout, CanaryThenFullRollout) {
   EXPECT_TRUE(audited(QStringLiteral("action=release_start_canary target=#%1 result=ok detail=confirmed=password").arg(id)));
   EXPECT_TRUE(audited(QStringLiteral("action=release_confirm_full target=#%1 result=ok detail=confirmed=password").arg(id)));
   EXPECT_TRUE(audited(QStringLiteral("发布 #%1：观察期内无失败、无告警，待确认全量").arg(id)));
-  // 操作员的操作记着来源主机（服务端界面所在的主机），设备上报的结果记着设备的地址
+  // 操作员的操作记着来源主机（服务端界面所在的主机），设备上报的结果（UPGRADE 类）记着设备的地址
   for (const AuditEntry& e : backend.audit.recent(500, audit::kRollout)) {
     if (e.actor == QStringLiteral("oper")) {
       EXPECT_EQ(e.source, AuditService::localSource());
     }
-    if (e.actor == kDev2) {
-      EXPECT_EQ(e.source, QStringLiteral("127.0.0.1"));
-    }
   }
+  int upgradeResults = 0;
+  for (const AuditEntry& e : backend.audit.recent(500, audit::kUpgrade)) {
+    if (!e.message.startsWith(QStringLiteral("升级结果 SUCCESS"))) continue;
+    ++upgradeResults;
+    EXPECT_EQ(e.source, QStringLiteral("127.0.0.1"));
+    EXPECT_EQ(e.actor, e.deviceId);
+  }
+  EXPECT_EQ(upgradeResults, 3);
   EXPECT_TRUE(backend.audit.verify().ok);
 }
 

@@ -45,6 +45,11 @@ class TcpClient : public QObject {
   // 发 BYE 后断开，不再重连。
   void stop(const QString& reason = QStringLiteral("shutdown"));
 
+  // 演示面板的“模拟断网”：blocked 为 true 时立即丢掉当前连接（不发 BYE，像网线被拔），
+  // 之后每次重连都当作网络不可达，照常按退避序列等待；改回 false 立刻重连。
+  void setNetworkBlocked(bool blocked);
+  bool networkBlocked() const { return networkBlocked_; }
+
   // ONLINE 状态下发送一帧（CHUNK_REQ、PROGRESS 等）。
   bool send(MsgType type, const QByteArray& body);
   bool sendJson(MsgType type, const QJsonObject& body);
@@ -81,6 +86,7 @@ class TcpClient : public QObject {
   QSslSocket* socket_ = nullptr;
   FrameChannel* channel_ = nullptr;
   State state_ = State::Stopped;
+  bool networkBlocked_ = false;  // 演示面板模拟断网中
   Backoff backoff_;
   QTimer reconnectTimer_;  // 退避等待
   QTimer loginTimer_;      // 连接到登录完成的时限

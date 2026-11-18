@@ -27,6 +27,8 @@ add_library(fwds_client_lib STATIC
   business/event_outbox.cpp
   business/event_reporter.h
   business/event_reporter.cpp
+  business/demo_actions.h
+  business/demo_actions.cpp
 )
 target_link_libraries(fwds_client_lib PUBLIC fwds_common)
 
@@ -34,5 +36,7 @@ add_executable(fwds-client
   main.cpp
   ui/main_window.h
   ui/main_window.cpp
+  ui/demo_panel.h
+  ui/demo_panel.cpp
 )
 target_link_libraries(fwds-client PRIVATE fwds_client_lib Qt6::Widgets)

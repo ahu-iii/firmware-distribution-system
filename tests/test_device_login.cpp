@@ -4,9 +4,12 @@
 #include <gtest/gtest.h>
 
 #include "client/net/tcp_client.h"
+#include "common/security/license.h"
 #include "server/business/heartbeat_monitor.h"
+#include "server/business/license_verifier.h"
 #include "server/business/login_handler.h"
 #include "server/net/tcp_server.h"
+#include "tests/test_fsk.h"
 #include "tests/test_server_env.h"
 #include "tests/test_util.h"
 
@@ -71,7 +74,8 @@ struct Server {
 
 // 一台设备：证书 + TcpClient，记录收到的登录失败码。
 struct Device {
-  Device(quint16 port, const Identity& identity, const QString& deviceId)
+  Device(quint16 port, const Identity& identity, const QString& deviceId,
+         const QByteArray& license = QByteArray("lic-bytes"))
       : security(sharedPki().pki.security(identity)) {
     ClientConfig c;
     c.serverHost = QStringLiteral("127.0.0.1");
@@ -80,13 +84,13 @@ struct Device {
     c.model = QStringLiteral("PLC-X200");
     c.protocol = fastParams();
     client = std::make_unique<TcpClient>(c, security.get());
-    client->setLoginProvider([deviceId]() {
+    client->setLoginProvider([deviceId, license]() {
       QJsonObject o;
       o.insert(QStringLiteral("device_id"), deviceId);
       o.insert(QStringLiteral("model"), QStringLiteral("PLC-X200"));
       o.insert(QStringLiteral("fw_version"), QStringLiteral("2.0.0"));
       o.insert(QStringLiteral("security_version"), 4);
-      o.insert(QStringLiteral("license"), QString::fromLatin1(QByteArray("lic-bytes").toBase64()));
+      o.insert(QStringLiteral("license"), QString::fromLatin1(license.toBase64()));
       o.insert(QStringLiteral("ts"), QDateTime::currentMSecsSinceEpoch());
       return o;
     });
@@ -189,6 +193,41 @@ TEST(DeviceLogin, LicenseVerifierRejectionGets2006) {
   EXPECT_EQ(dev.codes.first(), 2006);
   EXPECT_EQ(license.lastLicense, QByteArray("lic-bytes"));
   EXPECT_FALSE(fx.device().online);
+}
+
+// 正式的许可证检查（FskLicenseVerifier）：签给 DEV-001 的许可证能登录；
+// 拿签给 DEV-002 的许可证、或攻击者自己签的许可证登录都是 2006
+TEST(DeviceLogin, RealLicenseCheckAcceptsOwnLicenseOnly) {
+  ManifestVerifier fsk = fwds_test::trustedVerifier();
+  FskLicenseVerifier license(&fsk);
+  Server fx(&license);
+  auto issue = [](const fwds_test::TestFsk& key, const QString& id) {
+    License lic;
+    lic.deviceId = id;
+    lic.hwFingerprint = QString(64, QLatin1Char('a'));
+    lic.issuedAtMs = QDateTime::currentMSecsSinceEpoch();
+    lic.expiresAtMs = lic.issuedAtMs + 3600 * 1000;
+    const QByteArray body = encodeLicenseBody(lic);
+    return encodeLicenseFile(body, fwds_test::signWith(key, licenseSignedMessage(body)));
+  };
+  {
+    Device other(fx.server->serverPort(), sharedPki().dev001, QStringLiteral("DEV-001"),
+                 issue(fwds_test::sharedFsk(), QStringLiteral("DEV-002")));
+    other.client->start();
+    ASSERT_TRUE(waitFor([&]() { return !other.codes.isEmpty(); }));
+    EXPECT_EQ(other.codes.first(), 2006);
+  }
+  {
+    Device forged(fx.server->serverPort(), sharedPki().dev001, QStringLiteral("DEV-001"),
+                  issue(fwds_test::attackerFsk(), QStringLiteral("DEV-001")));
+    forged.client->start();
+    ASSERT_TRUE(waitFor([&]() { return !forged.codes.isEmpty(); }));
+    EXPECT_EQ(forged.codes.first(), 2006);
+  }
+  Device good(fx.server->serverPort(), sharedPki().dev001, QStringLiteral("DEV-001"),
+              issue(fwds_test::sharedFsk(), QStringLiteral("DEV-001")));
+  good.client->start();
+  ASSERT_TRUE(waitFor([&]() { return good.online() && fx.device().online; }));
 }
 
 // ST-30：同一设备连续登录失败 5 次后锁定；锁定期内换回正确的证书也是 2007

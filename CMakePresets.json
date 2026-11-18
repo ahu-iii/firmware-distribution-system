@@ -14,7 +14,8 @@
       "displayName": "发布（Release）",
       "binaryDir": "${sourceDir}/build/release",
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Release"
+        "CMAKE_BUILD_TYPE": "Release",
+        "FWDS_REQUIRE_EXE_SIGNATURE": "ON"
       }
     }
   ],

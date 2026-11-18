@@ -35,6 +35,11 @@ ManifestCheck ManifestVerifier::verify(const QByteArray& manifestRaw, const QByt
   return ManifestCheck::Ok;
 }
 
+bool ManifestVerifier::verifySignature(const QByteArray& message,
+                                       const QByteArray& signature) const {
+  return publicKey_ && rsaPssVerify(publicKey_.get(), message, signature);
+}
+
 bool chunkMatches(const Manifest& manifest, int index, const QByteArray& data) {
   // chunkLength 对越界的下标返回 -1，和任何长度都不相等
   if (data.size() != manifest.chunkLength(index)) return false;

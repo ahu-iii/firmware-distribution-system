@@ -31,7 +31,7 @@ const QByteArray kServerTls =
     "db_file=s.db\nfirmware_dir=fw\n" + kFsk + "cert_file=s.pem\nkey_file=s.key\n";
 const QByteArray kClientTls = "cert_file=d.pem\nkey_file=d.key\n";
 // 设备端必填的数据目录和固件签名公钥
-const QByteArray kClientDevice = "data_dir=dev1\n" + kFsk;
+const QByteArray kClientDevice = "data_dir=dev1\n" + kFsk + "license_file=dev1.lic\n";
 const QByteArray kTls = "[tls]\nca_file=ca.pem\ncrl_file=crl.pem\n";
 
 }  // namespace
@@ -137,6 +137,7 @@ TEST_F(ConfigTest, ClientConfigLoads) {
   EXPECT_EQ(cfg.serverPort, 9443);
   EXPECT_EQ(cfg.deviceId, QStringLiteral("DEV-001"));
   EXPECT_EQ(cfg.dataDir, QStringLiteral("dev1"));
+  EXPECT_EQ(cfg.licenseFile, QStringLiteral("dev1.lic"));
   EXPECT_EQ(cfg.rebootDelayMs, 2000);  // 没写就用默认值
   // 指纹统一成小写
   EXPECT_EQ(cfg.fskPubSha256,
@@ -158,6 +159,9 @@ TEST_F(ConfigTest, ClientDeviceItemsAreRequired) {
       write(head + "data_dir=dev1\nfsk_pub_file=fsk.pub.pem\nfsk_pub_sha256=abc123\n" + kClientTls + kTls),
       &cfg, &error));
   EXPECT_TRUE(error.contains(QStringLiteral("fsk_pub_sha256")));
+  // 许可证也是必填项（设计第 15 节）
+  EXPECT_FALSE(loadClientConfig(write(head + "data_dir=dev1\n" + kFsk + kClientTls + kTls), &cfg, &error));
+  EXPECT_TRUE(error.contains(QStringLiteral("license_file")));
 }
 
 TEST_F(ConfigTest, ProtocolValuesAreValidated) {
@@ -208,6 +212,7 @@ TEST(ConfigTemplates, ShippedTemplatesBehaveAsDocumented) {
   ASSERT_TRUE(loadClientConfig(filledFile.fileName(), &client, &error)) << error.toStdString();
   EXPECT_EQ(server.firmwareDir, QStringLiteral("local/data/firmware"));
   EXPECT_EQ(client.dataDir, QStringLiteral("local/device/DEV-001"));
+  EXPECT_EQ(client.licenseFile, QStringLiteral("local/lic/DEV-001.lic"));
   EXPECT_EQ(server.protocol.reconnectBackoffMs, ProtocolParams().reconnectBackoffMs);
   // 分片下载的三个参数：模板里写的是协议第 8 节的默认值
   EXPECT_EQ(client.protocol.chunkWindow, 16);

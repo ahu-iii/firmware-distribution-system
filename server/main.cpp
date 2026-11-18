@@ -1,15 +1,23 @@
 // fwds-server：分发服务端入口。
 // 用法：fwds-server --config <配置文件> [--headless]
+//       fwds-server --config <配置文件> --check   部署自检：检查各项材料、迁移并检查数据库，然后退出
 // 启动前须设置环境变量 FWDS_KEY_PASSPHRASE（服务端私钥口令），程序读取后立即清除。
+// 启动顺序：读配置 → 装入固件签名公钥（核对指纹）→ 程序自校验 → 建立 TLS 材料 → 数据库 → 各模块 → 监听。
 #include <QApplication>
 #include <QCommandLineParser>
 #include <QCoreApplication>
 #include <QDateTime>
+#include <QSqlQuery>
+#include <QTextStream>
 #include <QTimer>
 #include <memory>
 
+#include "common/build_info.h"
 #include "common/config.h"
 #include "common/log.h"
+#include "common/shutdown_signal.h"
+#include "common/protocol.h"
+#include "common/security/exe_signature.h"
 #include "common/security/fsk_public_key.h"
 #include "common/security/key_store.h"
 #include "common/security/tls_channel.h"
@@ -18,11 +26,13 @@
 #include "server/business/device_registry.h"
 #include "server/business/dispatch_gate.h"
 #include "server/business/heartbeat_monitor.h"
+#include "server/business/license_verifier.h"
 #include "server/business/login_handler.h"
 #include "server/business/login_throttle.h"
 #include "server/business/rollout_manager.h"
 #include "server/net/tcp_server.h"
 #include "server/security/audit_service.h"
+#include "server/security/device_audit.h"
 #include "server/security/operator_auth.h"
 #include "server/storage/database.h"
 #include "server/ui/main_window.h"
@@ -43,17 +53,44 @@ static std::unique_ptr<fwds::TlsChannelSecurity> makeChannelSecurity(const fwds:
   return security;
 }
 
+// 数一张表有多少行，读不出来返回 -1。
+static qint64 countRows(fwds::Database& db, const QString& table) {
+  QSqlQuery query(db.handle());
+  if (!query.exec(QStringLiteral("SELECT COUNT(*) FROM \"%1\"").arg(table)) || !query.next()) return -1;
+  return query.value(0).toLongLong();
+}
+
+// --check 的输出：每行“名称=值”，部署脚本在升级前后各取一次比对（设计 8.4 节冒烟检查）。
+// 审计哈希链校验不通过返回 false。
+static bool printCheckSummary(fwds::Database& db, const fwds::AuditService& audit) {
+  QTextStream out(stdout);
+  out << "version=" << fwds::kAppVersion << "\n";
+  out << "schema_version=" << db.schemaVersion() << "\n";
+  out << "devices=" << countRows(db, QStringLiteral("device")) << "\n";
+  out << "firmware=" << countRows(db, QStringLiteral("firmware")) << "\n";
+  out << "releases=" << countRows(db, QStringLiteral("release")) << "\n";
+  out << "audit_rows=" << countRows(db, QStringLiteral("audit_log")) << "\n";
+  const fwds::AuditCheck chain = audit.verify();
+  out << "audit_chain=" << (chain.ok ? QStringLiteral("ok") : QStringLiteral("bad")) << "\n";
+  if (!chain.ok) out << "audit_detail=" << chain.detail << "\n";
+  return chain.ok;
+}
+
 int main(int argc, char* argv[]) {
   // 作为后台服务运行时没有图形环境，--headless 下不创建界面
+  // --check、--version、--help 同样不需要界面（部署脚本在没有图形环境的机器上也要调用）
   bool headless = false;
   for (int i = 1; i < argc; ++i) {
-    if (qstrcmp(argv[i], "--headless") == 0) headless = true;
+    if (qstrcmp(argv[i], "--headless") == 0 || qstrcmp(argv[i], "--check") == 0 ||
+        qstrcmp(argv[i], "--version") == 0 || qstrcmp(argv[i], "--help") == 0) {
+      headless = true;
+    }
   }
   std::unique_ptr<QCoreApplication> app;
   if (headless) app = std::make_unique<QCoreApplication>(argc, argv);
   else app = std::make_unique<QApplication>(argc, argv);
   QCoreApplication::setApplicationName(QStringLiteral("fwds-server"));
-  QCoreApplication::setApplicationVersion(QStringLiteral("0.1.0"));
+  QCoreApplication::setApplicationVersion(QString::fromLatin1(fwds::kAppVersion));
 
   QCommandLineParser parser;
   parser.setApplicationDescription(QStringLiteral("工业固件安全升级分发系统 - 服务端"));
@@ -62,8 +99,12 @@ int main(int argc, char* argv[]) {
   const QCommandLineOption configOpt(QStringLiteral("config"), QStringLiteral("配置文件路径（必填）"),
                                      QStringLiteral("file"));
   const QCommandLineOption headlessOpt(QStringLiteral("headless"), QStringLiteral("不显示界面"));
+  const QCommandLineOption checkOpt(
+      QStringLiteral("check"),
+      QStringLiteral("部署自检：检查配置、公钥、程序签名、证书和私钥，迁移并检查数据库，输出统计后退出"));
   parser.addOption(configOpt);
   parser.addOption(headlessOpt);
+  parser.addOption(checkOpt);
   parser.process(*app);
 
   fwds::initLogging(QStringLiteral("INFO"));
@@ -74,6 +115,28 @@ int main(int argc, char* argv[]) {
     return 2;
   }
   fwds::initLogging(config.logLevel);
+  // 运行日志同时写进文件（按大小轮转），“运行日志”页从这些文件里检索
+  const QString logName = QStringLiteral("fwds-server");  // 日志文件名 fwds-server.log
+  if (!fwds::openLogFile(config.logFile, logName, &error)) {
+    qCCritical(fwds::lcApp).noquote() << error;
+    return 2;
+  }
+
+  qCInfo(fwds::lcApp).noquote() << "fwds-server" << fwds::kAppVersion << "schema"
+                                << fwds::kSchemaVersion << "protocol" << int(fwds::kProtocolVersion);
+
+  // 固件签名公钥：服务端只让这把公钥验得过的固件包进固件库，许可证和程序签名也用它验。
+  // 指纹和配置对不上就不启动
+  fwds::ManifestVerifier fskVerifier;
+  if (!fwds::loadPinnedFskPublicKey(config.fskPubFile, config.fskPubSha256, &fskVerifier, &error)) {
+    qCCritical(fwds::lcSecurity).noquote() << error;
+    return 5;
+  }
+  // 程序自校验（设计第 15 节）：程序文件被改过就不运行
+  if (!fwds::selfCheckExecutable(fskVerifier, &error)) {
+    qCCritical(fwds::lcSecurity).noquote() << error;
+    return 7;
+  }
 
   const std::unique_ptr<fwds::TlsChannelSecurity> security =
       makeChannelSecurity(config.tls, &error);
@@ -89,21 +152,10 @@ int main(int argc, char* argv[]) {
     qCWarning(fwds::lcSecurity) << "server certificate expires within 15 days, issue a new one";
   }
 
-  // 固件签名公钥：服务端只让这把公钥验得过的固件包进固件库。指纹和配置对不上就不启动
-  fwds::ManifestVerifier fskVerifier;
-  if (!fwds::loadPinnedFskPublicKey(config.fskPubFile, config.fskPubSha256, &fskVerifier, &error)) {
-    qCCritical(fwds::lcSecurity).noquote() << error;
-    return 5;
-  }
 
-  // 存储层：数据库（设备注册表、账号表、固件表、发布表）
+  // 存储层：数据库（设备注册表、账号表、固件表、发布表）。旧结构在这里迁移到当前版本
   fwds::Database database;
   if (!database.open(config.dbFile, &error)) {
-    qCCritical(fwds::lcApp).noquote() << error;
-    return 4;
-  }
-  fwds::DeviceRegistry registry(&database);
-  if (!registry.load(&error)) {
     qCCritical(fwds::lcApp).noquote() << error;
     return 4;
   }
@@ -111,6 +163,14 @@ int main(int argc, char* argv[]) {
   // 审计日志：接着数据库里已有的哈希链往后写
   fwds::AuditService auditService(&database, config.auditCheckpointFile);
   if (!auditService.load(&error)) {
+    qCCritical(fwds::lcApp).noquote() << error;
+    return 4;
+  }
+  // 部署自检到此为止：不加载设备表和发布表（加载时会改写在线状态、暂停进行中的发布）
+  if (parser.isSet(checkOpt)) return printCheckSummary(database, auditService) ? 0 : 8;
+
+  fwds::DeviceRegistry registry(&database);
+  if (!registry.load(&error)) {
     qCCritical(fwds::lcApp).noquote() << error;
     return 4;
   }
@@ -126,10 +186,9 @@ int main(int argc, char* argv[]) {
   fwds::TcpServer server(config, security.get());
   fwds::LoginThrottle loginThrottle(config.loginFailLimit, config.loginFailWindowS * 1000LL,
                                     config.loginLockS * 1000LL);
-  // 许可证验签依赖固件签名密钥（FSK），在“固件签名与验签”一步接入；这之前不检查许可证
-  fwds::LicenseVerifier* licenseVerifier = nullptr;
-  qCWarning(fwds::lcApp) << "license check is not available in this build, LOGIN skips it";
-  fwds::LoginHandler loginHandler(config.protocol, &registry, &loginThrottle, licenseVerifier);
+  // 许可证：LOGIN 带来的 device.lic 用 FSK 公钥验签，核对设备 ID 和有效期，不过返回 2006
+  fwds::FskLicenseVerifier licenseVerifier(&fskVerifier);
+  fwds::LoginHandler loginHandler(config.protocol, &registry, &loginThrottle, &licenseVerifier);
   fwds::HeartbeatMonitor heartbeatMonitor(&server, &registry);
   // 事件入库与对账：设备上报的进度、结果、告警按 (设备, 序号) 去重入库，登录时按 event_base 对账
   fwds::EventStore eventStore(&database, &registry, &server);
@@ -160,6 +219,8 @@ int main(int argc, char* argv[]) {
                    &fwds::RolloutManager::onDeviceProgress);
   QObject::connect(&eventStore, &fwds::EventStore::alertStored, &rollout,
                    &fwds::RolloutManager::onDeviceAlert);
+  // 设备侧的登录、断线、心跳超时、升级结果、安全告警写进审计日志（CONN / HB / UPGRADE / SECURITY）
+  fwds::DeviceAudit deviceAudit(&server, &eventStore, &registry, &auditService);
   QObject::connect(&server, &fwds::TcpServer::sessionOpened, &loginHandler,
                    [&loginHandler](fwds::Session* session) {
                      QObject::connect(session, &fwds::Session::loginRequested, &loginHandler,
@@ -174,8 +235,10 @@ int main(int argc, char* argv[]) {
     window = std::make_unique<fwds::MainWindow>(&server, &registry, &admin, &dispatchGate,
                                                 &firmwareRepo, &rollout, &auditService);
     window->setEventStore(&eventStore);
+    window->setRunLog(config.logFile, logName);
     window->show();
     QTimer::singleShot(0, window.get(), &fwds::MainWindow::promptLogin);
   }
+  fwds::quitOnTerminationSignal(app.get());
   return app->exec();
 }
