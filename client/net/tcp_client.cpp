@@ -50,7 +50,11 @@ void TcpClient::connectNow() {
   socket_ = new QSslSocket(this);
   connect(socket_, &QAbstractSocket::disconnected, this,
           [this]() { dropConnection(QStringLiteral("连接断开")); });
-  connect(socket_, &QAbstractSocket::errorOccurred, this, [this](QAbstractSocket::SocketError) {
+  connect(socket_, &QAbstractSocket::errorOccurred, this, [this](QAbstractSocket::SocketError e) {
+    if (e == QAbstractSocket::SslInternalError) {
+      // TLS 记录校验失败（密文被改动或记录被重放），按安全事件记录后照常断开重连
+      qCCritical(lcSecurity).noquote() << "TLS record rejected:" << socket_->errorString();
+    }
     dropConnection(QStringLiteral("网络错误：%1").arg(socket_->errorString()));
   });
 

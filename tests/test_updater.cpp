@@ -1,9 +1,10 @@
 // Updater（设备升级状态机）的单元测试：不走网络，测试自己扮演服务端，把帧直接交给 Updater。
 // 覆盖：正常升级全流程与分区切换（FT-04、FT-05）、自检失败自动回滚（FT-13）、降级被拒（ST-21）、
-// 写入前整包校验（ST-19 整包部分）、取消在各阶段的处理、恢复模式、重启途中进程被杀，
-// 以及升级过程变成哪些事件（EventReporter → EventOutbox，协议 5.7 节）。
+// 篡改镜像任意字节（ST-19：100 个偏移逐片拦截，以及写入前整包校验）、取消在各阶段的处理、恢复模式、
+// 重启途中进程被杀，以及升级过程变成哪些事件（EventReporter → EventOutbox，协议 5.7 节）。
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QRandomGenerator>
 #include <QTemporaryDir>
 #include <QTimer>
 #include <gtest/gtest.h>
@@ -254,6 +255,74 @@ TEST_F(UpdaterTest, TamperedDownloadIsNotWritten) {
   EXPECT_FALSE(QFile::exists(partFile(fw)));
   EXPECT_TRUE(readBootConfig(config.dataDir).pending.isEmpty());
   EXPECT_EQ(rebootsRequested, 0);
+}
+
+// ST-19：服务端推送的镜像被改了 1 比特。取 100 个偏移：首字节、末字节、每个分片边界两侧各一个，
+// 其余用固定种子随机取。每个偏移都用一台新设备完整走一遍：被改的那一片每次重发都是错的，
+// 设备重试到上限后以 3004 中止，不进入 WRITING，分区 b 不出现任何文件，仍运行 2.0.0。
+// 设置环境变量 FWDS_ST19_CSV 时把每个偏移的结果写成 CSV，作为测试报告的证据文件。
+TEST_F(UpdaterTest, HundredSingleBitFlipsAreAllDetectedBeforeWriting) {
+  const DeviceFirmware fw(QStringLiteral("2.1.0"), 5, 8 * kChunkSize + 123);  // 9 片，最后一片 123 字节
+  const qsizetype size = fw.image.size();
+  QList<qsizetype> offsets{0, size - 1};
+  for (int k = 1; k <= 8; ++k) offsets << qsizetype(k) * kChunkSize - 1 << qsizetype(k) * kChunkSize;
+  QRandomGenerator rng(20261118);
+  while (offsets.size() < 100) {
+    const qsizetype offset = rng.bounded(static_cast<int>(size));
+    if (!offsets.contains(offset)) offsets << offset;
+  }
+
+  QString csv = QStringLiteral("offset,chunk,result,code,reached_writing,slot_b_written,running_version\n");
+  int detected = 0;
+  for (const qsizetype offset : offsets) {
+    const int bad = static_cast<int>(offset / kChunkSize);
+    config.dataDir = dir.filePath(QStringLiteral("device-%1").arg(offset));
+    installFactoryFirmware();
+    powerOn();
+    states.clear();
+    results.clear();
+    resultCodes.clear();
+    notify(fw);
+    int served = 0;
+    const bool failed = waitFor([&]() {
+      while (served < requests.size()) {
+        const ChunkRequest r = requests.at(served++);
+        for (int i = r.fromIndex; i < r.fromIndex + r.count; ++i) {
+          QByteArray data = fw.chunk(i);
+          if (i == bad) data = flipBit(data, offset - qsizetype(bad) * kChunkSize);
+          updater->handleFrame(frameOf(MsgType::ChunkData, encodeChunkData(r.pkgId, i, data)));
+        }
+      }
+      return updater->state() == Updater::State::Failed;
+    }, 10000);
+    const bool wroteSlot = QFile::exists(slotFile(QStringLiteral("b"), QStringLiteral("firmware.bin"))) ||
+                           QFile::exists(slotFile(QStringLiteral("b"), QStringLiteral("manifest.json")));
+    const bool reachedWriting = states.contains(Updater::State::Writing);
+    const QString running = updater->bootState().running.version;
+    const int code = resultCodes.isEmpty() ? 0 : resultCodes.last();
+    EXPECT_TRUE(failed) << "offset " << offset;
+    EXPECT_EQ(code, static_cast<int>(ErrorCode::ChunkTampered)) << "offset " << offset;
+    EXPECT_FALSE(reachedWriting) << "offset " << offset;
+    EXPECT_FALSE(wroteSlot) << "offset " << offset;
+    EXPECT_EQ(running, QStringLiteral("2.0.0")) << "offset " << offset;
+    if (failed && code == static_cast<int>(ErrorCode::ChunkTampered) && !reachedWriting && !wroteSlot) {
+      ++detected;
+    }
+    csv += QStringLiteral("%1,%2,%3,%4,%5,%6,%7\n")
+               .arg(offset)
+               .arg(bad)
+               .arg(results.isEmpty() ? QStringLiteral("-") : results.last())
+               .arg(code)
+               .arg(reachedWriting ? "yes" : "no", wroteSlot ? "yes" : "no", running);
+  }
+  EXPECT_EQ(detected, 100);
+
+  const QString csvPath = qEnvironmentVariable("FWDS_ST19_CSV");
+  if (!csvPath.isEmpty()) {
+    QFile out(csvPath);
+    ASSERT_TRUE(out.open(QIODevice::WriteOnly));
+    out.write(csv.toUtf8());
+  }
 }
 
 // 写入前（VERIFYING）收到取消：放弃升级，删除临时文件，3012
