@@ -44,6 +44,7 @@ add_executable(fwds-tests
   test_updater.cpp
   test_firmware_repo.cpp
   test_dispatch.cpp
+  test_events.cpp
 )
 target_link_libraries(fwds-tests PRIVATE fwds_server_lib fwds_client_lib fwds_signer_lib GTest::gtest)
 

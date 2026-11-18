@@ -20,6 +20,7 @@ namespace fwds {
 
 class AccountPage;
 class DevicePage;
+class EventStore;
 class FirmwarePage;
 class TcpServer;
 
@@ -31,6 +32,9 @@ class MainWindow : public QMainWindow {
 
   // 弹出登录对话框。登录成功显示主界面；用户取消则关闭窗口、退出程序。
   void promptLogin();
+
+  // 事件入库模块，交给设备监控页的“设备事件”对话框。
+  void setEventStore(EventStore* events);
 
  private:
   void applySession();          // 登录状态或角色变化后刷新界面
