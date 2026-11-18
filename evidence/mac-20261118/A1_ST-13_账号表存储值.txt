@@ -1,0 +1,14 @@
+# A1 / ST-13：账号表存储值（macOS 真机演示库 local/ev/data/fwds-server.db）
+
+sqlite3 查询：SELECT username, role, kdf, kdf_iter, length(salt), hex(substr(salt,1,4)), length(pwd_hash), hex(substr(pwd_hash,1,4)), must_change FROM operator;
+
+username  role        kdf                 kdf_iter  salt_len  salt_head  hash_len  hash_head  must_change
+--------  ----------  ------------------  --------  --------  ---------  --------  ---------  -----------
+maint01   maintainer  pbkdf2-hmac-sha256  600000    16        4BC24664…  32        60E69105…  0          
+op01      operator    pbkdf2-hmac-sha256  600000    16        34A70F47…  32        16E498CF…  0          
+aud01     auditor     pbkdf2-hmac-sha256  600000    16        C0A3A5A7…  32        9C98494A…  0          
+
+（盐和派生值只显示前 4 字节；每个账号的盐都不同。）
+
+在整个数据库文件里搜索本轮演示口令原文和它们的单次 SHA-256：
+命中合计：0（5 个口令 × 原文 / SHA-256）

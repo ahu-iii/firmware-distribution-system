@@ -1,0 +1,108 @@
+# A2 / ST-06：macOS 真机抓包明文搜索（tshark 4.x，lo0，tcp port 19543）
+
+pcap evidence/mac-20261118/A2_ST-06_单台升级2.1.0.pcapng: 3293800 bytes
+device_id            0
+"type"               0
+pkg_id               0
+UPDATE_NOTIFY        0
+CHUNK                0
+security_version     0
+manifest             0
+manifest_sig         0
+release_id           0
+from_index           0
+heartbeat_interval   0
+chunk_sha256         0
+build_time           0
+"code"               0
+UPDATE_CANCEL        0
+emergency_stop       0
+reason               0
+event_seq            0
+event_ack            0
+DEV-001              0
+DEV-002              0
+DEV-003              0
+DEV-004              0
+PLC-X200             0
+PLC-Y300             0
+FWDS                 0
+IFW1                 0
+BEGIN                0
+image@0              0
+image@4096           0
+image@1MiB           0
+image@end-32         0
+total hits 0
+
+pcap evidence/mac-20261118/A2_ST-06_灰度与紧急停止.pcapng: 41224280 bytes
+device_id            0
+"type"               0
+pkg_id               0
+UPDATE_NOTIFY        0
+CHUNK                0
+security_version     0
+manifest             0
+manifest_sig         0
+release_id           0
+from_index           0
+heartbeat_interval   0
+chunk_sha256         0
+build_time           0
+"code"               0
+UPDATE_CANCEL        0
+emergency_stop       0
+reason               0
+event_seq            0
+event_ack            0
+DEV-001              0
+DEV-002              0
+DEV-003              0
+DEV-004              0
+PLC-X200             0
+PLC-Y300             0
+FWDS                 0
+IFW1                 0
+BEGIN                0
+image@0              0
+image@4096           0
+image@1MiB           0
+image@5MiB           0
+image@end-32         0
+total hits 0
+
+pcap local/ev/fw/fw_2.1.0_sv5.fwpkg: 3003842 bytes
+device_id            0
+"type"               0
+pkg_id               1
+UPDATE_NOTIFY        0
+CHUNK                0
+security_version     1
+manifest             0
+manifest_sig         0
+release_id           0
+from_index           0
+heartbeat_interval   0
+chunk_sha256         1
+build_time           1
+"code"               0
+UPDATE_CANCEL        0
+emergency_stop       0
+reason               0
+event_seq            0
+event_ack            0
+DEV-001              0
+DEV-002              0
+DEV-003              0
+DEV-004              0
+PLC-X200             2
+PLC-Y300             0
+FWDS                 0
+IFW1                 1
+BEGIN                0
+image@0              1
+image@4096           1
+image@1MiB           1
+image@end-32         1
+total hits 11
+

@@ -1,0 +1,19 @@
+# A6 / FT-08：断网期间设备 outbox（2026-11-18T17:35:16Z）
+断网时刻：gate on 17:34:50.712
+kill -9 之前：events.jsonl       46 行，seq=77
+前 3 行样本：
+{"body":{"event_seq":32,"pkg_id":"df815a14-f954-4eed-806c-8415a3856eaa","progress":0,"state":"NOTIFIED","ts":1795023288685},"type":48}
+{"body":{"event_seq":33,"pkg_id":"df815a14-f954-4eed-806c-8415a3856eaa","progress":0,"state":"DOWNLOADING","ts":1795023288694},"type":48}
+{"body":{"event_seq":34,"pkg_id":"df815a14-f954-4eed-806c-8415a3856eaa","progress":5,"state":"DOWNLOADING","ts":1795023288783},"type":48}
+
+kill -9 并在断网中重启后：
+2026-11-18T17:35:17.615Z [INFO] [fwds.app] outbox: last event_seq 77 , 46 unconfirmed
+events.jsonl       46 行，seq=77
+恢复网络 17:35:30
+
+## FT-09 恢复后
+2026-11-18T17:35:17.615Z [INFO] [fwds.app] outbox: last event_seq 77 , 46 unconfirmed
+2026-11-18T17:35:33.281Z [INFO] [fwds.net] login ok, heartbeat every 5000 ms
+events.jsonl        0 行
+服务端 device_event 表中 DEV-001 行数与序号范围：
+77|1|77|77

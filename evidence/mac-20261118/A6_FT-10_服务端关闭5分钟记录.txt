@@ -1,0 +1,13 @@
+# A6 / FT-10：服务端关闭 5 分钟
+服务端关闭（SIGTERM）：17:36:07 UTC；重新启动：17:41:21 UTC
+
+## DEV-002 设备日志（关闭期间按退避重连，界面一直可操作，见截图）
+2026-11-18T17:36:07.962Z [WARN] [fwds.net] connection lost: 网络错误：The remote host closed the connection - retry in 1000 ms
+2026-11-18T17:36:08.915Z [INFO] [fwds.net] connecting to "127.0.0.1" 19543
+2026-11-18T17:36:08.920Z [WARN] [fwds.net] connection lost: 网络错误：Connection refused - retry in 2000 ms
+2026-11-18T17:36:10.841Z [INFO] [fwds.net] connecting to "127.0.0.1" 19543
+2026-11-18T17:36:10.845Z [WARN] [fwds.net] connection lost: 网络错误：Connection refused - retry in 4000 ms
+2026-11-18T17:36:14.842Z [INFO] [fwds.net] connecting to "127.0.0.1" 19543
+2026-11-18T17:41:39.379Z [INFO] [fwds.net] login ok, heartbeat every 5000 ms
+……
+2026-11-18T17:41:39.379Z [INFO] [fwds.net] login ok, heartbeat every 5000 ms

@@ -15,7 +15,9 @@ needles = [b'device_id', b'"type"', b'pkg_id', b'UPDATE_NOTIFY', b'CHUNK', b'sec
 # 镜像里的 16 字节片段：开头（镜像头）、中间几处、结尾
 for name, off in [('image@0', 0), ('image@4096', 4096), ('image@1MiB', 1 << 20),
                   ('image@5MiB', 5 << 20), ('image@end-32', len(img) - 32)]:
-    needles.append((name, img[off:off + 16]))
+    # 镜像不足 5 MiB 时这个偏移取到的是空串，空串在任何文件里都“命中”，所以跳过
+    if 0 <= off and off + 16 <= len(img):
+        needles.append((name, img[off:off + 16]))
 
 print(f'pcap {sys.argv[1]}: {len(pcap)} bytes')
 hits = 0

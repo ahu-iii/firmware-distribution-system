@@ -1,0 +1,34 @@
+# A5 / FT-14：写入中断电（macOS 真机，2026-11-18）
+做法：操作员向 DEV-002 下发 200 MB 的 2.4.0（sv 7）；脚本等设备日志出现 "writing 2.4.0 to slot b" 时截一张设备窗口，然后 kill -9 结束 fwds-client（等同于在活动监视器里强制退出，进程来不及做任何收尾）。
+kill 时刻：2026-11-18T17:26:49.3NZ
+
+## 断电前设备日志（末尾）
+2026-11-18T17:26:47.189Z [INFO] [fwds.app] new download df815a14-f954-4eed-806c-8415a3856eaa chunks done 0 / 3052
+2026-11-18T17:26:49.064Z [INFO] [fwds.app] all chunks downloaded for df815a14-f954-4eed-806c-8415a3856eaa
+2026-11-18T17:26:49.264Z [INFO] [fwds.app] writing 2.4.0 to slot b
+
+## 断电后的分区状态（kill 之后、重启之前）
+slot_b/firmware.bin 只写了 170917888 / 200000000 字节，没有 manifest.json、manifest.sig
+boot.json：{"active": "a", "boot_attempts": 0, "min_security_version": 4, "pending": ""}
+
+## 重启后设备日志
+2026-11-18T17:27:19.848Z [INFO] [fwds.app] fwds-client 0.2.0 device DEV-002
+2026-11-18T17:27:19.852Z [WARN] [fwds.app] 没有程序签名文件 ~/school-labs/firmware-distribution-system/build/dev/bin/fwds-client.sig - development build, self check skipped
+2026-11-18T17:27:19.986Z [INFO] [fwds.app] outbox: last event_seq 41 , 41 unconfirmed
+2026-11-18T17:27:20.145Z [INFO] [fwds.net] connecting to "127.0.0.1" 19543
+2026-11-18T17:27:20.435Z [INFO] [fwds.net] login ok, heartbeat every 5000 ms
+2026-11-18T17:27:25.366Z [INFO] [fwds.app] resume download df815a14-f954-4eed-806c-8415a3856eaa chunks done 3052 / 3052
+2026-11-18T17:27:25.520Z [INFO] [fwds.app] all chunks downloaded for df815a14-f954-4eed-806c-8415a3856eaa
+2026-11-18T17:27:25.682Z [INFO] [fwds.app] writing 2.4.0 to slot b
+2026-11-18T17:27:28.018Z [INFO] [fwds.app] new firmware confirmed: 2.4.0 slot b
+2026-11-18T17:27:28.018Z [INFO] [fwds.app] update result: SUCCESS 0 
+2026-11-18T17:27:28.023Z [INFO] [fwds.net] connecting to "127.0.0.1" 19543
+2026-11-18T17:27:28.037Z [INFO] [fwds.net] login ok, heartbeat every 5000 ms
+
+## 续写完成后 boot.json
+{
+    "active": "b",
+    "boot_attempts": 0,
+    "min_security_version": 7,
+    "pending": ""
+}

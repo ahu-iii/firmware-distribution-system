@@ -1,0 +1,46 @@
+# A9 / FT-17、ST-16 macOS：私钥口令存放在登录钥匙串（2026-11-18T17:09:05Z）
+## security find-generic-password（只看属性，不加 -w，不输出口令）
+keychain: "~/Library/Keychains/login.keychain-db"
+version: 512
+class: "genp"
+attributes:
+    0x00000007 <blob>=0x46574453204445562D30303320E7A781E992A5E58FA3E4BBA4  "FWDS DEV-003 \347\247\201\351\222\245\345\217\243\344\273\244"
+    0x00000008 <blob>=<NULL>
+    "acct"<blob>="~/school-labs/firmware-distribution-system/local/ev/inst:DEV-003"
+    "cdat"<timedate>=0x32303236313131383137303834335A00  "20261118170843Z\000"
+    "crtr"<uint32>=<NULL>
+    "cusi"<sint32>=<NULL>
+    "desc"<blob>=<NULL>
+    "gena"<blob>=<NULL>
+    "icmt"<blob>=<NULL>
+    "invi"<sint32>=<NULL>
+    "mdat"<timedate>=0x32303236313131383137303834335A00  "20261118170843Z\000"
+    "nega"<sint32>=<NULL>
+    "prot"<blob>=<NULL>
+    "scrp"<sint32>=<NULL>
+    "svce"<blob>="fwds-key-passphrase"
+    "type"<uint32>=<NULL>
+
+## 安装目录里搜口令原文（应为 0 个文件）
+命中文件数：0
+## 生成的配置中与口令相关的行
+6:; 私钥口令在启动前通过环境变量 FWDS_KEY_PASSPHRASE 注入，程序读取后立即清除。
+## 由 run.sh 从钥匙串取口令启动的设备进程（pid 7696），ps -E 看到的环境变量
+FWDS_KEY_PASSPHRASE=
+（变量值已被程序抹成空串）
+环境块中口令原文命中次数：0
+服务端进程环境块中服务端口令原文命中次数：0
+
+## 安装记录（install.sh 输出）
+2026-11-18T17:08:42Z 记录文件：~/school-labs/firmware-distribution-system/local/ev/inst/logs/install-20261118T170842Z-DEV-003.log
+2026-11-18T17:08:42Z 安装 fwds-client 0.2.0，实例 DEV-003，安装目录 ~/school-labs/firmware-distribution-system/local/ev/inst（macos）
+2026-11-18T17:08:43Z 依赖检查：fwds-client 0.2.0 可以运行
+2026-11-18T17:08:43Z 程序已装入 ~/school-labs/firmware-distribution-system/local/ev/inst/app/0.2.0
+2026-11-18T17:08:43Z 证书和密钥材料已拷到 ~/school-labs/firmware-distribution-system/local/ev/inst/pki/DEV-003
+2026-11-18T17:08:43Z 配置已生成：~/school-labs/firmware-distribution-system/local/ev/inst/config/DEV-003.ini
+2026-11-18T17:08:43Z 请输入 DEV-003 的私钥口令（签发证书时设置的），存入登录钥匙串
+2026-11-18T17:08:43Z 私钥口令已保存（登录钥匙串）
+2026-11-18T17:08:44Z 部署自检通过：version=0.2.0 device_id=DEV-003 check=ok 
+2026-11-18T17:08:44Z 出厂固件已写入分区 a
+2026-11-18T17:08:44Z 按 --no-service 安装：没有注册开机自启和进程守护
+2026-11-18T17:08:50Z 安装完成：DEV-003 已启动，日志 ~/school-labs/firmware-distribution-system/local/ev/inst/logs/DEV-003.log
