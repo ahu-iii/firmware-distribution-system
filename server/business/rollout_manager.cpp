@@ -598,14 +598,19 @@ void RolloutManager::onDeviceResult(const QString& deviceId, qint64 releaseId,
     qCWarning(lcApp).noquote() << "unknown RESULT value from" << deviceId;
     return;
   }
-  // 找这台设备、这个包所在的最近一次发布。发布号为 0（设备重启后补报）时只按设备和包找
+  // 找这台设备、这个包所在的最近一次发布。发布号为 0（设备重启后补报）时只按设备和包找；
+  // 包 ID 为空（写完分区后断电、上电时回滚，设备已不知道是哪个包）时，取这台设备正在升级的那一条
+  const QString pkg = pkgId.isNull() ? QStringLiteral("") : pkgId;  // 空 QString 会绑成 SQL NULL
   QSqlQuery query(db_->handle());
   query.prepare(QStringLiteral(
-      "SELECT t.release_id FROM release_target t JOIN \"release\" r ON r.release_id = t.release_id "
-      "WHERE t.device_id = ? AND r.pkg_id = ? AND (? = 0 OR t.release_id = ?) "
+      "SELECT t.release_id, r.pkg_id FROM release_target t "
+      "JOIN \"release\" r ON r.release_id = t.release_id "
+      "WHERE t.device_id = ? AND (r.pkg_id = ? OR (? = '' AND t.status = 'notified')) "
+      "AND (? = 0 OR t.release_id = ?) "
       "ORDER BY t.release_id DESC LIMIT 1"));
   query.addBindValue(deviceId);
-  query.addBindValue(pkgId);
+  query.addBindValue(pkg);
+  query.addBindValue(pkg);
   query.addBindValue(releaseId);
   query.addBindValue(releaseId);
   if (!query.exec() || !query.next()) {
@@ -613,17 +618,16 @@ void RolloutManager::onDeviceResult(const QString& deviceId, qint64 releaseId,
     return;
   }
   const qint64 id = query.value(0).toLongLong();
+  const QString releasePkgId = query.value(1).toString();
   const QString error = code == 0 ? QString() : QStringLiteral("%1 %2").arg(code).arg(detail.left(120));
   setTarget(id, deviceId, status, error);
-  chunks_->finish(deviceId, pkgId);  // 有了结果，设备重连时不再重发这个包的通知
+  // 有了结果，删掉下发记录：设备重连时不再重发这个包的通知。用发布里的包 ID，回滚时设备报的是空串
+  chunks_->finish(deviceId, releasePkgId);
 
-  DeviceRecord device;
-  registry_->find(deviceId, &device);
-  record(deviceId, deviceId,
-         QStringLiteral("发布 #%1：设备上报结果 %2%3")
-             .arg(id)
-             .arg(result, error.isEmpty() ? QString() : QStringLiteral("（%1）").arg(error)),
-         status != QLatin1String("success"), device.peerAddress);
+  // 设备上报的结果由 DeviceAudit 记进审计日志（UPGRADE 类），这里只写运行日志
+  qCInfo(lcApp).noquote() << QStringLiteral("发布 #%1：设备 %2 上报结果 %3 %4")
+                                 .arg(id)
+                                 .arg(deviceId, result, error);
 
   // 推送阶段：空出了一个位置，推下一台并重新判断；观察期：看是否要暂停
   Release r;

@@ -6,6 +6,7 @@
 #include <QList>
 #include <QString>
 
+#include "common/log.h"
 #include "common/protocol.h"
 
 namespace fwds {
@@ -61,6 +62,8 @@ struct ServerConfig {
   int loginFailWindowS = 300;
   int loginLockS = 600;
   QString logLevel = QStringLiteral("INFO");
+  // 运行日志文件：目录取 [server] log_dir，不配置时为数据库文件所在目录下的 logs/；轮转规则取 [log]
+  LogFileParams logFile;
   ProtocolParams protocol;
   RolloutParams rollout;
   TlsConfig tls;
@@ -83,6 +86,8 @@ struct ClientConfig {
   // 模拟重启要“黑屏”多久（毫秒）。只影响演示时 REBOOTING 状态停留的时间。
   int rebootDelayMs = 2000;
   QString logLevel = QStringLiteral("INFO");
+  // 运行日志文件：目录固定为设备数据目录下的 logs/（设计 5.2 节），轮转规则取 [log]
+  LogFileParams logFile;
   ProtocolParams protocol;
   TlsConfig tls;
 };

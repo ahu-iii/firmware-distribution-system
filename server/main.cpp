@@ -32,6 +32,7 @@
 #include "server/business/rollout_manager.h"
 #include "server/net/tcp_server.h"
 #include "server/security/audit_service.h"
+#include "server/security/device_audit.h"
 #include "server/security/operator_auth.h"
 #include "server/storage/database.h"
 #include "server/ui/main_window.h"
@@ -114,6 +115,12 @@ int main(int argc, char* argv[]) {
     return 2;
   }
   fwds::initLogging(config.logLevel);
+  // 运行日志同时写进文件（按大小轮转），“运行日志”页从这些文件里检索
+  const QString logName = QStringLiteral("fwds-server");  // 日志文件名 fwds-server.log
+  if (!fwds::openLogFile(config.logFile, logName, &error)) {
+    qCCritical(fwds::lcApp).noquote() << error;
+    return 2;
+  }
 
   qCInfo(fwds::lcApp).noquote() << "fwds-server" << fwds::kAppVersion << "schema"
                                 << fwds::kSchemaVersion << "protocol" << int(fwds::kProtocolVersion);
@@ -212,6 +219,8 @@ int main(int argc, char* argv[]) {
                    &fwds::RolloutManager::onDeviceProgress);
   QObject::connect(&eventStore, &fwds::EventStore::alertStored, &rollout,
                    &fwds::RolloutManager::onDeviceAlert);
+  // 设备侧的登录、断线、心跳超时、升级结果、安全告警写进审计日志（CONN / HB / UPGRADE / SECURITY）
+  fwds::DeviceAudit deviceAudit(&server, &eventStore, &registry, &auditService);
   QObject::connect(&server, &fwds::TcpServer::sessionOpened, &loginHandler,
                    [&loginHandler](fwds::Session* session) {
                      QObject::connect(session, &fwds::Session::loginRequested, &loginHandler,
@@ -226,6 +235,7 @@ int main(int argc, char* argv[]) {
     window = std::make_unique<fwds::MainWindow>(&server, &registry, &admin, &dispatchGate,
                                                 &firmwareRepo, &rollout, &auditService);
     window->setEventStore(&eventStore);
+    window->setRunLog(config.logFile, logName);
     window->show();
     QTimer::singleShot(0, window.get(), &fwds::MainWindow::promptLogin);
   }

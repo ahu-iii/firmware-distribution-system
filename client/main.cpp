@@ -112,6 +112,11 @@ int main(int argc, char* argv[]) {
     return 2;
   }
   fwds::initLogging(config.logLevel);
+  // 运行日志同时写进设备数据目录下的 logs/（按大小轮转）
+  if (!fwds::openLogFile(config.logFile, QStringLiteral("fwds-client"), &error)) {
+    qCCritical(fwds::lcApp).noquote() << error;
+    return 2;
+  }
   qCInfo(fwds::lcApp).noquote() << "fwds-client" << fwds::kAppVersion << "device" << config.deviceId;
 
   // 固件签名公钥：设备只装这把公钥对应的私钥签过的固件。指纹对不上就不运行

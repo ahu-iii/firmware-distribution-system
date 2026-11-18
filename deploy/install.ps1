@@ -107,6 +107,8 @@ if ($Role -eq 'server') {
   Set-IniValue $cfg 'server' 'listen_port' $Port
   Set-IniValue $cfg 'server' 'db_file' "$D\fwds-server.db"
   Set-IniValue $cfg 'server' 'firmware_dir' "$D\firmware"
+  # 程序自己写的运行日志（按 [log] 规则轮转，“运行日志”页检索这里）；logs\<实例>.log 仍是启动器截下的终端输出
+  Set-IniValue $cfg 'server' 'log_dir' "$Root\logs\$Instance"
   Set-IniValue $cfg 'server' 'audit_checkpoint_file' "$Root\audit\server.audit-checkpoint"
   Set-IniValue $cfg 'server' 'fsk_pub_file' "$Root\pki\fsk.pub.pem"
   Set-IniValue $cfg 'server' 'fsk_pub_sha256' $FskFingerprint

@@ -8,10 +8,14 @@ add_library(fwds_server_lib STATIC
   net/tcp_server.cpp
   storage/database.h
   storage/database.cpp
+  storage/run_log_reader.h
+  storage/run_log_reader.cpp
   security/operator_auth.h
   security/operator_auth.cpp
   security/audit_service.h
   security/audit_service.cpp
+  security/device_audit.h
+  security/device_audit.cpp
   business/device_registry.h
   business/device_registry.cpp
   business/login_throttle.h
@@ -56,5 +60,7 @@ add_executable(fwds-server
   ui/audit_page.cpp
   ui/event_dialog.h
   ui/event_dialog.cpp
+  ui/log_page.h
+  ui/log_page.cpp
 )
 target_link_libraries(fwds-server PRIVATE fwds_server_lib Qt6::Widgets)

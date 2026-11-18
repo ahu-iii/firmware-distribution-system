@@ -67,14 +67,16 @@ echo "rollback exit=$?  server=$(cat root/state/server.current) DEV-001=$(cat ro
 step "7. 升级失败自动回滚：0.2.2 包里的 fwds-server 被改了 1 字节（签名不符，新版本自检失败）"
 cp -R dist/fwds-0.2.1-linux dist/fwds-0.2.2-broken
 echo 0.2.2 > dist/fwds-0.2.2-broken/VERSION
-python3 -c "import sys; p=sys.argv[1]; b=bytearray(open(p,'rb').read()); b[len(b)//2]^=1; open(p,'wb').write(b)" dist/fwds-0.2.2-broken/bin/fwds-server
+python3 -c "import sys; p=sys.argv[1]; b=bytearray(open(p,'rb').read()); b[len(b)*9//10]^=1; open(p,'wb').write(b)" dist/fwds-0.2.2-broken/bin/fwds-server
 dist/fwds-0.2.2-broken/deploy/upgrade.sh --root "$S/root" --instance server --expect-login 60
 echo "upgrade exit=$?  server=$(cat root/state/server.current)"
 tail -2 root/logs/server.check.log
 
 step "8. ST-31 改已安装的 fwds-client 1 字节后启动"
+# 加壳后的文件整体是压缩数据：改到启动早期就要执行的代码，程序在自校验之前就崩溃（同样没有运行起来）；
+# 改在靠后的位置（常量数据）才能看到自校验以退出码 7 拒绝。位置依赖构建产物，换构建后不是 7 就换个位置
 cp root/app/0.2.1/bin/fwds-client tampered-client; cp root/app/0.2.1/bin/fwds-client.sig tampered-client.sig
-python3 -c "import sys; p=sys.argv[1]; b=bytearray(open(p,'rb').read()); b[len(b)//2]^=1; open(p,'wb').write(b)" tampered-client
+python3 -c "import sys; p=sys.argv[1]; b=bytearray(open(p,'rb').read()); b[len(b)*9//10]^=1; open(p,'wb').write(b)" tampered-client
 FWDS_KEY_PASSPHRASE="$DEV_PASS" ./tampered-client --config root/config/DEV-001.ini --check; echo "exit=$?（7 = 程序自校验失败）"
 rm -f tampered-client.sig
 FWDS_KEY_PASSPHRASE="$DEV_PASS" ./tampered-client --config root/config/DEV-001.ini --check; echo "exit=$?（发布版缺签名文件同样拒绝运行）"

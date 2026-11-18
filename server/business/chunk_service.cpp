@@ -11,6 +11,8 @@ ChunkService::ChunkService(TcpServer* server, const ProtocolParams& params, QObj
   connect(server, &TcpServer::sessionOpened, this, [this](Session* session) {
     connect(session, &Session::stateChanged, this, &ChunkService::onSessionStateChanged);
     connect(session, &Session::frameReceived, this, &ChunkService::onFrame);
+    connect(session, &Session::heartbeatReceived, this,
+            [this](Session* s, const QByteArray&) { onHeartbeat(s); });
   });
   connect(server, &TcpServer::sessionClosed, this,
           [this](Session* session, const QString&) { onSessionClosed(session); });
@@ -27,6 +29,7 @@ bool ChunkService::assign(const QString& deviceId, qint64 releaseId, const Store
   assignment.package = package;
   if (!sendNotify(session, assignment)) return false;
   assignments_.insert(deviceId, assignment);
+  resendOnHeartbeat_.remove(deviceId);  // 刚发过通知，不用再等心跳重发
   return true;
 }
 
@@ -65,8 +68,17 @@ void ChunkService::onSessionStateChanged(Session* session) {
   if (online_.value(deviceId, nullptr) == session) return;
   online_.insert(deviceId, session);
 
-  // 设备（重新）登录时还有没完成的下发：把同一个包的通知再发一次。
-  // 这不是盲发——这个包在设备上一次在线时已经下发过，设备靠这条通知从断点接着下载
+  // 设备（重新）登录时还有没完成的下发：等它的第一个心跳再把同一个包的通知发一次。
+  // 这不是盲发——这个包在设备上一次在线时已经下发过，设备靠这条通知从断点接着下载。
+  // 不在登录时立刻发：设备可能是升级完重启回来的，它的 RESULT 还在 outbox 里、登录后才补传
+  if (assignments_.contains(deviceId)) resendOnHeartbeat_.insert(deviceId);
+}
+
+void ChunkService::onHeartbeat(Session* session) {
+  const QString deviceId = session->deviceId();
+  if (online_.value(deviceId, nullptr) != session) return;  // 被顶替掉的旧会话
+  if (!resendOnHeartbeat_.remove(deviceId)) return;
+  // 登录后补传的事件都排在这个心跳前面，已经处理完了：RESULT 到了的话下发记录已被 finish 删掉
   const auto it = assignments_.constFind(deviceId);
   if (it != assignments_.constEnd()) sendNotify(session, it.value());
 }
@@ -74,7 +86,10 @@ void ChunkService::onSessionStateChanged(Session* session) {
 void ChunkService::onSessionClosed(Session* session) {
   // 只移除“当前登记的那条会话”；被新连接顶替掉的旧会话关闭时不动
   const QString deviceId = session->deviceId();
-  if (online_.value(deviceId, nullptr) == session) online_.remove(deviceId);
+  if (online_.value(deviceId, nullptr) == session) {
+    online_.remove(deviceId);
+    resendOnHeartbeat_.remove(deviceId);
+  }
 }
 
 void ChunkService::onFrame(Session* session, const Frame& frame) {

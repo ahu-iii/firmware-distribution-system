@@ -1,5 +1,6 @@
 #include "common/config.h"
 
+#include <QDir>
 #include <QFileInfo>
 #include <QRegularExpression>
 #include <QSettings>
@@ -44,6 +45,12 @@ bool readRequiredString(const QSettings& s, const QString& key, QString* value,
   }
   *value = v;
   return true;
+}
+
+// [log] 段的轮转规则：一个文件 16 KB ~ 100 MB，保留 1 ~ 50 个旧文件。
+bool readLogFile(const QSettings& s, LogFileParams* p, QString* error) {
+  return readInt(s, QStringLiteral("log/max_file_kb"), 16, 102400, &p->maxFileKb, error) &&
+         readInt(s, QStringLiteral("log/max_files"), 1, 50, &p->maxFiles, error);
 }
 
 bool readProtocol(const QSettings& s, ProtocolParams* p, QString* error) {
@@ -180,6 +187,15 @@ bool loadServerConfig(const QString& path, ServerConfig* out, QString* error) {
   }
   cfg.rollout.observeMs = observeS * 1000;
   cfg.logLevel = s.value(QStringLiteral("log/level"), cfg.logLevel).toString().trimmed().toUpper();
+  cfg.logFile.dir = s.value(QStringLiteral("server/log_dir")).toString().trimmed();
+  if (cfg.logFile.dir.startsWith(QLatin1Char('<'))) {
+    *error = QStringLiteral("配置项 server/log_dir 仍是模板占位符");
+    return false;
+  }
+  if (cfg.logFile.dir.isEmpty()) {
+    cfg.logFile.dir = QFileInfo(cfg.dbFile).dir().filePath(QStringLiteral("logs"));
+  }
+  if (!readLogFile(s, &cfg.logFile, error)) return false;
   if (!readProtocol(s, &cfg.protocol, error)) return false;
   if (!readTls(s, QStringLiteral("server"), &cfg.tls, error)) return false;
 
@@ -204,6 +220,8 @@ bool loadClientConfig(const QString& path, ClientConfig* out, QString* error) {
     return false;
   }
   cfg.logLevel = s.value(QStringLiteral("log/level"), cfg.logLevel).toString().trimmed().toUpper();
+  cfg.logFile.dir = QDir(cfg.dataDir).filePath(QStringLiteral("logs"));
+  if (!readLogFile(s, &cfg.logFile, error)) return false;
   if (!readProtocol(s, &cfg.protocol, error)) return false;
   if (!readTls(s, QStringLiteral("client"), &cfg.tls, error)) return false;
 

@@ -137,6 +137,8 @@ if [ "$ROLE" = server ]; then
   ini_set "$CFG" server listen_port "$PORT"
   ini_set "$CFG" server db_file "$D/fwds-server.db"
   ini_set "$CFG" server firmware_dir "$D/firmware"
+  # 程序自己写的运行日志（按 [log] 规则轮转，“运行日志”页检索这里）；logs/<实例>.log 仍是启动器截下的终端输出
+  ini_set "$CFG" server log_dir "$ROOT/logs/$INST"
   # 审计检查点放在数据目录之外，和数据库分开（设计第 13 章）
   mkdir -p "$ROOT/audit"
   ini_set "$CFG" server audit_checkpoint_file "$ROOT/audit/server.audit-checkpoint"
