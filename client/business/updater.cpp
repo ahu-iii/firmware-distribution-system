@@ -25,8 +25,12 @@ Updater::Updater(const ClientConfig& config, const ManifestVerifier& verifier,
   // Downloader 负责 NOTIFIED、DOWNLOADING 两段，它的状态、进度、告警原样转出去
   connect(&downloader_, &Downloader::stateChanged, this, &Updater::onDownloaderState);
   connect(&downloader_, &Downloader::progressChanged, this, [this](int) { reportProgress(); });
-  connect(&downloader_, &Downloader::alertRaised, this, &Updater::alertRaised);
+  connect(&downloader_, &Downloader::alertRaised, this, [this](int code, const QString& detail) {
+    takeIdsFromDownloader();
+    emit alertRaised(code, detail);
+  });
   connect(&downloader_, &Downloader::failed, this, [this](int code, const QString& detail) {
+    takeIdsFromDownloader();
     emit finished(QStringLiteral("FAILED"), code, detail);
   });
   connect(&downloader_, &Downloader::downloadCompleted, this, &Updater::onDownloadCompleted);
@@ -38,7 +42,10 @@ void Updater::powerOn() {
   boot_ = bootloader_.boot();
   applyBoot();
   // 上次升级如果停在“已写入、未确认”，这次启动就是它的结论，照常报告
+  // 这时进程刚启动，不知道是哪一次发布：发布号报 0，包 ID 用转正的固件的；
+  // 回滚的那个包已经从 boot.json 里清掉了，包 ID 报空串
   if (boot_.outcome == BootResult::Outcome::Upgraded) {
+    pkgId_ = boot_.running.pkgId;
     setState(State::Success);
     emit finished(QStringLiteral("SUCCESS"), 0, QString());
   } else if (boot_.outcome == BootResult::Outcome::RolledBack) {
@@ -102,9 +109,17 @@ void Updater::handleFrame(const Frame& frame) {
   downloader_.handleFrame(frame);
 }
 
+void Updater::takeIdsFromDownloader() {
+  pkgId_ = downloader_.notifiedPkgId();
+  releaseId_ = downloader_.releaseId();
+}
+
 void Updater::onDownloaderState(Downloader::State state) {
   switch (state) {
-    case Downloader::State::Notified: setState(State::Notified); break;
+    case Downloader::State::Notified:
+      takeIdsFromDownloader();
+      setState(State::Notified);
+      break;
     case Downloader::State::Downloading: setState(State::Downloading); break;
     case Downloader::State::Failed: setState(State::Failed); break;
     case Downloader::State::Idle:

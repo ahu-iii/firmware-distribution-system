@@ -56,6 +56,10 @@ class Downloader : public QObject {
   // 这份 manifest 的原始字节和签名（通知里带来的）。写入分区时原样保存，Bootloader 启动时再验。
   const QByteArray& manifestRaw() const { return manifestRaw_; }
   const QByteArray& signature() const { return signature_; }
+  // 最近一条发给本设备的 UPDATE_NOTIFY 里的包 ID 和发布号。验签之前就记下，
+  // 通知没通过检查时上报的 RESULT / ALERT 也能说明是哪个包。
+  const QString& notifiedPkgId() const { return notifiedPkgId_; }
+  qint64 releaseId() const { return releaseId_; }
 
  signals:
   void stateChanged(fwds::Downloader::State state);
@@ -97,6 +101,8 @@ class Downloader : public QObject {
   Manifest manifest_;
   QByteArray manifestRaw_;
   QByteArray signature_;
+  QString notifiedPkgId_;
+  qint64 releaseId_ = 0;
 
   QTimer recheckTimer_;  // 间隔为 0：每回到事件循环一次，校验一小段断点
   int recheckNext_ = 0;  // 下一段从哪一片开始校验

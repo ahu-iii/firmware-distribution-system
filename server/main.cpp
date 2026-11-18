@@ -22,6 +22,7 @@
 #include "server/business/login_throttle.h"
 #include "server/business/rollout_manager.h"
 #include "server/net/tcp_server.h"
+#include "server/security/audit_service.h"
 #include "server/security/operator_auth.h"
 #include "server/storage/database.h"
 #include "server/ui/main_window.h"
@@ -107,11 +108,19 @@ int main(int argc, char* argv[]) {
     return 4;
   }
 
+  // 审计日志：接着数据库里已有的哈希链往后写
+  fwds::AuditService auditService(&database, config.auditCheckpointFile);
+  if (!auditService.load(&error)) {
+    qCCritical(fwds::lcApp).noquote() << error;
+    return 4;
+  }
+
   // 安全层与业务层：账号、“允许下发”开关（每次启动默认关闭）、管理操作入口
   fwds::OperatorAuth operatorAuth(&database);
   fwds::DispatchGate dispatchGate;
   fwds::AdminService admin(&operatorAuth, &registry, &dispatchGate);
   admin.setCertVerifier(&security->verifier());
+  admin.setAuditService(&auditService);
 
   // 网络层 + 登录裁决 + 在线状态同步
   fwds::TcpServer server(config, security.get());
@@ -122,6 +131,9 @@ int main(int argc, char* argv[]) {
   qCWarning(fwds::lcApp) << "license check is not available in this build, LOGIN skips it";
   fwds::LoginHandler loginHandler(config.protocol, &registry, &loginThrottle, licenseVerifier);
   fwds::HeartbeatMonitor heartbeatMonitor(&server, &registry);
+  // 事件入库与对账：设备上报的进度、结果、告警按 (设备, 序号) 去重入库，登录时按 event_base 对账
+  fwds::EventStore eventStore(&database, &registry, &server);
+  loginHandler.setEventStore(&eventStore);
   // 固件库：启动时把库里的每个包重新检查一遍（验签、逐片哈希、整镜像哈希）
   fwds::FirmwareRepo firmwareRepo(&database, fskVerifier, config.firmwareDir);
   if (!firmwareRepo.load(&error)) {
@@ -130,14 +142,24 @@ int main(int argc, char* argv[]) {
   }
   // 分片服务应答设备的 CHUNK_REQ；给哪台设备下发哪个包由发布模块裁决（开关、互锁）后交给它
   fwds::ChunkService chunkService(&server, config.protocol);
-  fwds::RolloutManager rollout(&database, config.protocol, &registry, &firmwareRepo, &chunkService,
-                               &dispatchGate);
+  // 灰度发布：发布状态机、互锁、并发控制（设计 4.2 节）
+  fwds::RolloutManager rollout(&database, config.protocol, config.rollout, &registry, &firmwareRepo,
+                               &chunkService, &dispatchGate);
+  rollout.setAuditService(&auditService);
   if (!rollout.load(&error)) {
     qCCritical(fwds::lcApp).noquote() << error;
     return 4;
   }
   admin.setFirmwareRepo(&firmwareRepo);
   admin.setRolloutManager(&rollout);
+  // 设备的升级结果、进度、告警先由 EventStore 去重、按序入库，再交给发布模块推进或暂停发布。
+  // 只接入库成功的事件：重复补传的事件 EventStore 不会再发信号，发布不会被推进两次。
+  QObject::connect(&eventStore, &fwds::EventStore::resultStored, &rollout,
+                   &fwds::RolloutManager::onDeviceResult);
+  QObject::connect(&eventStore, &fwds::EventStore::progressStored, &rollout,
+                   &fwds::RolloutManager::onDeviceProgress);
+  QObject::connect(&eventStore, &fwds::EventStore::alertStored, &rollout,
+                   &fwds::RolloutManager::onDeviceAlert);
   QObject::connect(&server, &fwds::TcpServer::sessionOpened, &loginHandler,
                    [&loginHandler](fwds::Session* session) {
                      QObject::connect(session, &fwds::Session::loginRequested, &loginHandler,
@@ -150,7 +172,8 @@ int main(int argc, char* argv[]) {
   std::unique_ptr<fwds::MainWindow> window;
   if (!headless) {
     window = std::make_unique<fwds::MainWindow>(&server, &registry, &admin, &dispatchGate,
-                                                &firmwareRepo, &rollout);
+                                                &firmwareRepo, &rollout, &auditService);
+    window->setEventStore(&eventStore);
     window->show();
     QTimer::singleShot(0, window.get(), &fwds::MainWindow::promptLogin);
   }

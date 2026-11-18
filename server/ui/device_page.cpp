@@ -23,6 +23,7 @@
 
 #include "common/log.h"
 #include "server/ui/device_table_model.h"
+#include "server/ui/event_dialog.h"
 
 namespace fwds {
 
@@ -67,6 +68,9 @@ DevicePage::DevicePage(DeviceRegistry* registry, AdminService* admin, QWidget* p
   buttons->addWidget(disableButton_);
   buttons->addWidget(groupButton_);
   buttons->addStretch();
+  eventsButton_ = new QPushButton(QStringLiteral("设备事件…"), this);
+  buttons->addWidget(eventsButton_);
+  connect(eventsButton_, &QPushButton::clicked, this, &DevicePage::showEvents);
   connect(registerButton_, &QPushButton::clicked, this, &DevicePage::registerDevice);
   connect(disableButton_, &QPushButton::clicked, this, &DevicePage::toggleDisabled);
   connect(groupButton_, &QPushButton::clicked, this, &DevicePage::changeGroup);
@@ -130,7 +134,20 @@ void DevicePage::updateButtons() {
   const bool selected = registry_->find(selectedDeviceId(), &d);
   disableButton_->setEnabled(selected);
   groupButton_->setEnabled(selected);
+  eventsButton_->setEnabled(selected && eventStore_);
   disableButton_->setText(selected && d.disabled ? QStringLiteral("启用") : QStringLiteral("停用"));
+}
+
+void DevicePage::setEventStore(EventStore* events) {
+  eventStore_ = events;
+  updateButtons();
+}
+
+void DevicePage::showEvents() {
+  const QString deviceId = selectedDeviceId();
+  if (deviceId.isEmpty() || !eventStore_) return;
+  EventDialog dialog(eventStore_, deviceId, this);
+  dialog.exec();
 }
 
 void DevicePage::registerDevice() {

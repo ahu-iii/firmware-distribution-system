@@ -1,6 +1,7 @@
 // Updater（设备升级状态机）的单元测试：不走网络，测试自己扮演服务端，把帧直接交给 Updater。
 // 覆盖：正常升级全流程与分区切换（FT-04、FT-05）、自检失败自动回滚（FT-13）、降级被拒（ST-21）、
-// 篡改镜像任意字节（ST-19：100 个偏移逐片拦截，以及写入前整包校验）、取消在各阶段的处理、恢复模式、重启途中进程被杀。
+// 篡改镜像任意字节（ST-19：100 个偏移逐片拦截，以及写入前整包校验）、取消在各阶段的处理、恢复模式、
+// 重启途中进程被杀，以及升级过程变成哪些事件（EventReporter → EventOutbox，协议 5.7 节）。
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QRandomGenerator>
@@ -8,6 +9,8 @@
 #include <QTimer>
 #include <gtest/gtest.h>
 
+#include "client/business/event_outbox.h"
+#include "client/business/event_reporter.h"
 #include "client/business/updater.h"
 #include "test_device.h"
 #include "tests/test_util.h"
@@ -410,4 +413,84 @@ TEST_F(UpdaterTest, RestartBeforeWriteKeepsOldFirmwareAndResumes) {
   EXPECT_EQ(requests.at(0).fromIndex, 4);  // 前 4 片不用重下
   ASSERT_TRUE(serveUntilState(fw, Updater::State::Success));
   EXPECT_EQ(readFile(slotFile(QStringLiteral("b"), QStringLiteral("firmware.bin"))), fw.image);
+}
+
+// ---------------- 升级过程上报的事件 ----------------
+
+namespace {
+
+// 把 Updater 的事件记进一个不在线的 outbox（只落盘），返回所有事件的 (类型, 消息体)
+struct RecordedEvents {
+  explicit RecordedEvents(Updater* updater, const QString& dir)
+      : outbox(dir, [](MsgType, const QByteArray&) { return false; }), reporter(updater, &outbox) {
+    QString error;
+    EXPECT_TRUE(outbox.open(&error)) << error.toStdString();
+  }
+  QStringList progressStates() const {
+    QStringList states;
+    for (const EventOutbox::Event& e : outbox.pending()) {
+      if (e.type == MsgType::Progress) {
+        const QString state = e.body.value(QStringLiteral("state")).toString();
+        if (states.isEmpty() || states.last() != state) states.append(state);
+      }
+    }
+    return states;
+  }
+  EventOutbox outbox;
+  EventReporter reporter;
+};
+
+}  // namespace
+
+// 正常升级：每个阶段一条 PROGRESS（下载、写入阶段按 5% 再报），最后一条 RESULT SUCCESS，
+// 带发布号、包 ID 和升级后运行的版本；序号从 1 开始连续
+TEST_F(UpdaterTest, FullUpgradeIsReportedAsEvents) {
+  installFactoryFirmware();
+  powerOn();
+  RecordedEvents events(updater.get(), dir.filePath(QStringLiteral("outbox")));
+  const DeviceFirmware fw(QStringLiteral("2.1.0"), 5, 40 * kChunkSize);
+  notify(fw);
+  ASSERT_TRUE(serveUntilState(fw, Updater::State::Success));
+
+  const QList<EventOutbox::Event>& all = events.outbox.pending();
+  for (int i = 0; i < all.size(); ++i) EXPECT_EQ(all.at(i).seq, i + 1);
+  EXPECT_EQ(events.progressStates(),
+            (QStringList{QStringLiteral("NOTIFIED"), QStringLiteral("DOWNLOADING"),
+                         QStringLiteral("VERIFYING"), QStringLiteral("WRITING"),
+                         QStringLiteral("REBOOTING")}));
+  int downloading = 0;
+  for (const EventOutbox::Event& e : all) {
+    if (e.body.value(QStringLiteral("state")).toString() == QLatin1String("DOWNLOADING")) ++downloading;
+    if (e.type == MsgType::Progress) EXPECT_EQ(e.body.value(QStringLiteral("pkg_id")).toString(), fw.manifest.pkgId);
+  }
+  EXPECT_GE(downloading, 10);  // 40 片，每涨 5% 一条
+  EXPECT_LE(downloading, 21);
+
+  const EventOutbox::Event& last = all.last();
+  ASSERT_EQ(last.type, MsgType::Result);
+  EXPECT_EQ(last.body.value(QStringLiteral("result")).toString(), QStringLiteral("SUCCESS"));
+  EXPECT_EQ(last.body.value(QStringLiteral("release_id")).toInteger(), 12);
+  EXPECT_EQ(last.body.value(QStringLiteral("pkg_id")).toString(), fw.manifest.pkgId);
+  EXPECT_EQ(last.body.value(QStringLiteral("fw_version")).toString(), QStringLiteral("2.1.0"));
+  EXPECT_EQ(last.body.value(QStringLiteral("active_slot")).toString(), QStringLiteral("b"));
+}
+
+// 降级被拒：先 ALERT 3003，再 RESULT FAILED 3003，运行版本仍是原来的 2.0.0；不报 PROGRESS
+TEST_F(UpdaterTest, RejectedDowngradeIsReportedAsAlertThenResult) {
+  installFactoryFirmware();
+  powerOn();
+  RecordedEvents events(updater.get(), dir.filePath(QStringLiteral("outbox")));
+  const DeviceFirmware oldFw(QStringLiteral("1.9.0"), 3);
+  notify(oldFw);
+  spin(20);
+
+  const QList<EventOutbox::Event>& all = events.outbox.pending();
+  ASSERT_EQ(all.size(), 2);
+  EXPECT_EQ(all.at(0).type, MsgType::Alert);
+  EXPECT_EQ(all.at(0).body.value(QStringLiteral("code")).toInt(), 3003);
+  EXPECT_EQ(all.at(0).body.value(QStringLiteral("pkg_id")).toString(), oldFw.manifest.pkgId);
+  EXPECT_EQ(all.at(1).type, MsgType::Result);
+  EXPECT_EQ(all.at(1).body.value(QStringLiteral("result")).toString(), QStringLiteral("FAILED"));
+  EXPECT_EQ(all.at(1).body.value(QStringLiteral("code")).toInt(), 3003);
+  EXPECT_EQ(all.at(1).body.value(QStringLiteral("fw_version")).toString(), QStringLiteral("2.0.0"));
 }

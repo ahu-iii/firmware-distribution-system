@@ -5,6 +5,7 @@
 //   4. 注册表：已注册、未停用、证书指纹一致（2005）
 //   5. 许可证（2006）——通过 LicenseVerifier 接口接入
 //   6. 失败锁定（2007）
+// 全部通过后，按 LOGIN 里的 event_base 做一次事件对账（EventStore），把 event_ack 写进 LOGIN_RESULT。
 // 第 3 ~ 5 项失败会计入 LoginThrottle，同一设备或同一 IP 失败次数超限后锁定一段时间。
 #pragma once
 
@@ -12,6 +13,7 @@
 
 #include "common/config.h"
 #include "server/business/device_registry.h"
+#include "server/business/event_store.h"
 #include "server/business/license_verifier.h"
 #include "server/business/login_throttle.h"
 #include "server/net/session.h"
@@ -27,6 +29,9 @@ class LoginHandler : public QObject {
                LicenseVerifier* license = nullptr, QObject* parent = nullptr);
 
  public slots:
+  // 事件入库模块。不设置时 event_ack 直接取注册表里的值（部分单元测试这样用）。
+  void setEventStore(EventStore* events) { events_ = events; }
+
   // 接 Session::loginRequested。
   void handle(fwds::Session* session, const QByteArray& body);
 
@@ -38,6 +43,7 @@ class LoginHandler : public QObject {
   DeviceRegistry* registry_;
   LoginThrottle* throttle_;
   LicenseVerifier* license_;
+  EventStore* events_ = nullptr;
 };
 
 }  // namespace fwds

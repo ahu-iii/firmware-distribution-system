@@ -137,6 +137,22 @@ void DeviceRegistry::markOffline(const QString& deviceId) {
   emit deviceChanged(deviceId);
 }
 
+void DeviceRegistry::markProgress(const QString& deviceId, const QString& upgradeState,
+                                  int progress) {
+  const auto it = devices_.find(deviceId);
+  if (it == devices_.end()) return;
+  it->upgradeState = upgradeState;
+  it->progress = progress;
+  emit deviceChanged(deviceId);
+}
+
+void DeviceRegistry::noteEventAck(const QString& deviceId, qint64 eventAck) {
+  const auto it = devices_.find(deviceId);
+  if (it == devices_.end() || it->eventAck == eventAck) return;
+  it->eventAck = eventAck;
+  emit deviceChanged(deviceId);
+}
+
 void DeviceRegistry::raiseAlert(const QString& deviceId, const QString& text) {
   const auto it = devices_.find(deviceId);
   if (it == devices_.end()) return;

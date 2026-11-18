@@ -48,6 +48,11 @@ bool ChunkService::cancel(const QString& deviceId, const QString& reason) {
   return true;
 }
 
+void ChunkService::finish(const QString& deviceId, const QString& pkgId) {
+  const auto it = assignments_.constFind(deviceId);
+  if (it != assignments_.constEnd() && it->package.manifest.pkgId == pkgId) assignments_.erase(it);
+}
+
 QString ChunkService::assignedPackage(const QString& deviceId) const {
   const auto it = assignments_.constFind(deviceId);
   return it == assignments_.constEnd() ? QString() : it->package.manifest.pkgId;

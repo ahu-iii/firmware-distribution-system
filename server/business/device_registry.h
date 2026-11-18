@@ -28,7 +28,7 @@ struct DeviceRecord {
   QString currentVersion;    // 设备上次登录时上报的固件版本
   int securityVersion = 0;
   QDateTime lastHeartbeat;   // 登录和下线时写库，在线期间只更新内存
-  qint64 eventAck = 0;       // 已连续收到的最大事件序号（EventStore 实现后推进）
+  qint64 eventAck = 0;       // 已连续收到的最大事件序号（EventStore 推进）
   // ---- 只在内存里，服务端重启后从头开始 ----
   bool online = false;       // 在线且已登录
   QString peerAddress;       // 当前连接的对端地址
@@ -60,6 +60,12 @@ class DeviceRegistry : public QObject {
   void markHeartbeat(const QString& deviceId, const QString& upgradeState, int progress);
   void markOffline(const QString& deviceId);
   void raiseAlert(const QString& deviceId, const QString& text);
+
+  // ---- 事件（EventStore 调用）----
+  // PROGRESS 事件里的升级状态和进度，比心跳更及时。只更新内存，不动最后心跳时间。
+  void markProgress(const QString& deviceId, const QString& upgradeState, int progress);
+  // event_ack 推进之后同步内存里的值。数据库里的 event_ack 由 EventStore 和事件在同一个事务里写。
+  void noteEventAck(const QString& deviceId, qint64 eventAck);
 
  signals:
   void deviceAdded(const QString& deviceId);

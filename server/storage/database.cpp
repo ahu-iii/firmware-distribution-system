@@ -11,8 +11,22 @@ namespace fwds {
 
 namespace {
 
+// 发布目标表：发布里的每台设备一行。phase 是它属于灰度批还是全量批，status 是它自己的结果。
+// held（待确认）：轮到它时不在线或正忙，没有推送，要操作员确认后才推（断网不盲发）
+const char kReleaseTargetTable[] =
+    "CREATE TABLE IF NOT EXISTS release_target ("
+    "  release_id INTEGER NOT NULL REFERENCES \"release\"(release_id),"
+    "  device_id  TEXT NOT NULL REFERENCES device(device_id),"
+    "  phase      TEXT NOT NULL CHECK (phase IN ('canary','full')),"
+    "  status     TEXT NOT NULL CHECK (status IN ('pending','held','notified','success','failed',"
+    "                                             'rolled_back','cancelled')),"
+    "  progress   INTEGER NOT NULL DEFAULT 0,"
+    "  last_error TEXT NOT NULL DEFAULT '',"
+    "  updated_at TEXT NOT NULL,"
+    "  PRIMARY KEY (release_id, device_id)"
+    ")";
+
 // 建表语句，字段与设计 5.1 节的 ER 图一致。时间一律存 UTC 的 ISO 8601 文本。
-// 事件、审计两张表在对应模块实现时加入。
 const char* const kSchema[] = {
     // 账号表：不存口令，只存派生函数名、迭代次数、盐和派生结果（设计 11.2 节）
     "CREATE TABLE IF NOT EXISTS operator ("
@@ -64,17 +78,31 @@ const char* const kSchema[] = {
     "  created_by   TEXT NOT NULL,"
     "  created_at   TEXT NOT NULL"
     ")",
-    // 发布目标表：发布里的每台设备一行。phase 是它属于灰度批还是全量批，status 是它自己的结果
-    "CREATE TABLE IF NOT EXISTS release_target ("
-    "  release_id INTEGER NOT NULL REFERENCES \"release\"(release_id),"
-    "  device_id  TEXT NOT NULL REFERENCES device(device_id),"
-    "  phase      TEXT NOT NULL CHECK (phase IN ('canary','full')),"
-    "  status     TEXT NOT NULL CHECK (status IN ('pending','notified','success','failed',"
-    "                                             'rolled_back','cancelled')),"
-    "  progress   INTEGER NOT NULL DEFAULT 0,"
-    "  last_error TEXT NOT NULL DEFAULT '',"
-    "  updated_at TEXT NOT NULL,"
-    "  PRIMARY KEY (release_id, device_id)"
+    kReleaseTargetTable,  // 发布目标表，语句在上面单独定义（升级旧数据库时还要用一次）
+    // 审计日志表（设计第 13 章）：每行的 hash 由上一行的 hash 和本行其余字段算出，连成一条哈希链。
+    // 只追加，程序里没有修改和删除这张表的语句
+    "CREATE TABLE IF NOT EXISTS audit_log ("
+    "  id        INTEGER PRIMARY KEY,"
+    "  ts        TEXT NOT NULL,"
+    "  level     TEXT NOT NULL,"
+    "  category  TEXT NOT NULL,"
+    "  actor     TEXT NOT NULL,"
+    "  source    TEXT NOT NULL,"
+    "  device_id TEXT NOT NULL,"
+    "  message   TEXT NOT NULL,"
+    "  prev_hash TEXT NOT NULL,"
+    "  hash      TEXT NOT NULL"
+    ")",
+    // 设备事件表（设计 4.6 节）：(device_id, event_seq) 为主键，同一序号只入库一次。
+    // 序号超过 device.event_ack 的行是“暂存”的，等设备补齐中间缺的序号
+    "CREATE TABLE IF NOT EXISTS device_event ("
+    "  device_id   TEXT NOT NULL REFERENCES device(device_id),"
+    "  event_seq   INTEGER NOT NULL,"
+    "  ts          TEXT NOT NULL,"
+    "  kind        TEXT NOT NULL CHECK (kind IN ('progress','result','alert')),"
+    "  payload     TEXT NOT NULL,"
+    "  received_at TEXT NOT NULL,"
+    "  PRIMARY KEY (device_id, event_seq)"
     ")",
 };
 
@@ -117,7 +145,7 @@ bool Database::open(const QString& path, QString* error) {
     *error = QStringLiteral("数据库初始化失败：%1").arg(pragma.lastError().text());
     return false;
   }
-  return createSchema(error);
+  return createSchema(error) && upgradeReleaseTarget(error);
 }
 
 bool Database::createSchema(QString* error) {
@@ -127,6 +155,45 @@ bool Database::createSchema(QString* error) {
       *error = QStringLiteral("建表失败：%1").arg(query.lastError().text());
       return false;
     }
+  }
+  return true;
+}
+
+bool Database::upgradeReleaseTarget(QString* error) {
+  // 早期版本建的 release_target 表，status 的 CHECK 里还没有 held。
+  // SQLite 不能修改 CHECK 约束，只能新建一张表把数据搬过去。建表语句里有 'held' 就说明不用升级
+  QSqlDatabase db = handle();
+  QSqlQuery query(db);
+  query.prepare(QStringLiteral("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?"));
+  query.addBindValue(QStringLiteral("release_target"));
+  if (!query.exec() || !query.next()) {
+    *error = QStringLiteral("读取表结构失败：%1").arg(query.lastError().text());
+    return false;
+  }
+  if (query.value(0).toString().contains(QLatin1String("'held'"))) return true;
+  query.finish();
+
+  // 改名 → 按新结构建表 → 搬数据 → 删旧表，放在一个事务里，中途失败就全部撤销
+  if (!db.transaction()) {
+    *error = QStringLiteral("数据库升级失败：%1").arg(db.lastError().text());
+    return false;
+  }
+  const QStringList steps = {
+      QStringLiteral("ALTER TABLE release_target RENAME TO release_target_old"),
+      QString::fromLatin1(kReleaseTargetTable),
+      QStringLiteral("INSERT INTO release_target SELECT * FROM release_target_old"),
+      QStringLiteral("DROP TABLE release_target_old"),
+  };
+  for (const QString& sql : steps) {
+    if (!query.exec(sql)) {
+      *error = QStringLiteral("数据库升级失败：%1").arg(query.lastError().text());
+      db.rollback();
+      return false;
+    }
+  }
+  if (!db.commit()) {
+    *error = QStringLiteral("数据库升级失败：%1").arg(db.lastError().text());
+    return false;
   }
   return true;
 }

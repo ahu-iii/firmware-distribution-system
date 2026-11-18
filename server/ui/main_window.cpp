@@ -12,15 +12,17 @@
 
 #include "server/net/tcp_server.h"
 #include "server/ui/account_page.h"
+#include "server/ui/audit_page.h"
 #include "server/ui/device_page.h"
 #include "server/ui/firmware_page.h"
 #include "server/ui/login_dialog.h"
+#include "server/ui/release_page.h"
 
 namespace fwds {
 
 MainWindow::MainWindow(TcpServer* server, DeviceRegistry* registry, AdminService* admin,
                        DispatchGate* gate, FirmwareRepo* firmware, RolloutManager* rollout,
-                       QWidget* parent)
+                       AuditService* audit, QWidget* parent)
     : QMainWindow(parent), server_(server), registry_(registry), admin_(admin), gate_(gate) {
   setWindowTitle(QStringLiteral("固件分发服务端"));
   resize(1180, 640);
@@ -46,8 +48,11 @@ MainWindow::MainWindow(TcpServer* server, DeviceRegistry* registry, AdminService
   devicePage_ = new DevicePage(registry_, admin_, this);
   accountPage_ = new AccountPage(admin_, this);
   firmwarePage_ = new FirmwarePage(firmware, rollout, registry_, admin_, this);
+  releasePage_ = new ReleasePage(rollout, firmware, registry_, admin_, this);
+  auditPage_ = new AuditPage(audit, admin_, this);
   tabs_->addTab(devicePage_, QStringLiteral("设备监控"));
   tabs_->addTab(firmwarePage_, QStringLiteral("固件库"));
+  tabs_->addTab(releasePage_, QStringLiteral("灰度发布"));
 
   auto* mainPage = new QWidget(this);
   auto* mainLayout = new QVBoxLayout(mainPage);
@@ -77,9 +82,10 @@ MainWindow::MainWindow(TcpServer* server, DeviceRegistry* registry, AdminService
     admin_->logout();
     promptLogin();
   });
-  // 切到“账号管理”页时重新读一次账号表（锁定状态、失败次数随时会变）
+  // 切到“账号管理”“审计日志”页时重新读一次（锁定状态、新的日志随时会变）
   connect(tabs_, &QTabWidget::currentChanged, this, [this](int index) {
     if (tabs_->widget(index) == accountPage_) accountPage_->refresh();
+    if (tabs_->widget(index) == auditPage_) auditPage_->refresh();
   });
   connect(admin_, &AdminService::sessionChanged, this, &MainWindow::applySession);
   connect(registry_, &DeviceRegistry::deviceChanged, this, &MainWindow::updateSummary);
@@ -92,6 +98,8 @@ MainWindow::MainWindow(TcpServer* server, DeviceRegistry* registry, AdminService
   updateDispatchLabel();
   updateSummary();
 }
+
+void MainWindow::setEventStore(EventStore* events) { devicePage_->setEventStore(events); }
 
 void MainWindow::promptLogin() {
   stack_->setCurrentIndex(0);
@@ -126,12 +134,20 @@ void MainWindow::applySession() {
   dispatchBox_->setEnabled(admin_->can(Permission::ToggleDispatch));
   devicePage_->applyPermissions();
   firmwarePage_->applyPermissions();
+  releasePage_->applyPermissions();
   const int accountTab = tabs_->indexOf(accountPage_);
   if (admin_->can(Permission::ManageAccounts)) {
     if (accountTab < 0) tabs_->addTab(accountPage_, QStringLiteral("账号管理"));
     accountPage_->refresh();
   } else if (accountTab >= 0) {
     tabs_->removeTab(accountTab);
+  }
+  const int auditTab = tabs_->indexOf(auditPage_);
+  if (admin_->can(Permission::ViewAudit)) {
+    if (auditTab < 0) tabs_->addTab(auditPage_, QStringLiteral("审计日志"));
+    auditPage_->refresh();
+  } else if (auditTab >= 0) {
+    tabs_->removeTab(auditTab);
   }
 }
 

@@ -17,7 +17,7 @@ QString stateText(TcpClient::State state) {
     case TcpClient::State::Connecting: return QStringLiteral("连接中");
     case TcpClient::State::WaitLogin: return QStringLiteral("登录中");
     case TcpClient::State::Online: return QStringLiteral("在线 / 已登录");
-    case TcpClient::State::Backoff: return QStringLiteral("已断开，等待重连");
+    case TcpClient::State::Backoff: return QStringLiteral("离线运行（已断开，等待重连）");
   }
   return QString();
 }
@@ -40,8 +40,8 @@ QString updateText(Updater::State state) {
 }  // namespace
 
 MainWindow::MainWindow(const ClientConfig& config, TcpClient* client, Updater* updater,
-                       QWidget* parent)
-    : QMainWindow(parent), updater_(updater) {
+                       EventOutbox* outbox, QWidget* parent)
+    : QMainWindow(parent), updater_(updater), outbox_(outbox) {
   setWindowTitle(QStringLiteral("设备客户端 %1").arg(config.deviceId));
   resize(600, 480);
 
@@ -66,8 +66,11 @@ MainWindow::MainWindow(const ClientConfig& config, TcpClient* client, Updater* u
   form->addRow(QStringLiteral("A/B 分区"), slotLabel_);
   form->addRow(QStringLiteral("升级状态"), updateLabel_);
   form->addRow(QStringLiteral("升级进度"), progressBar_);
+  outboxLabel_ = new QLabel(central);
+  form->addRow(QStringLiteral("待上报事件"), outboxLabel_);
   layout->addLayout(form);
   showFirmware();
+  showOutbox();
 
   log_ = new QPlainTextEdit(central);
   log_->setReadOnly(true);
@@ -103,6 +106,14 @@ MainWindow::MainWindow(const ClientConfig& config, TcpClient* client, Updater* u
   connect(updater, &Updater::alertRaised, this, [this](int code, const QString& detail) {
     appendLog(QStringLiteral("安全告警 %1：%2").arg(code).arg(detail));
   });
+  connect(outbox, &EventOutbox::changed, this, &MainWindow::showOutbox);
+}
+
+void MainWindow::showOutbox() {
+  outboxLabel_->setText(QStringLiteral("%1 条未确认（最新序号 %2，服务端已确认到 %3）")
+                            .arg(outbox_->pendingCount())
+                            .arg(outbox_->lastSeq())
+                            .arg(outbox_->ackedSeq()));
 }
 
 void MainWindow::showFirmware() {

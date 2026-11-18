@@ -23,6 +23,16 @@ bool isValidTag(const QString& text, bool allowEmpty) {
   return true;
 }
 
+// 操作名 → 审计日志分类（设计第 13 章）。
+QString categoryOf(const char* action) {
+  const QByteArray a(action);
+  if (a == "login" || a == "logout" || a == "change_password" || a == "bootstrap") {
+    return audit::kAuth;
+  }
+  if (a == "dispatch" || a.startsWith("release_")) return audit::kRollout;
+  return audit::kAdmin;
+}
+
 }  // namespace
 
 AdminService::AdminService(OperatorAuth* auth, DeviceRegistry* registry, DispatchGate* gate,
@@ -39,6 +49,29 @@ void AdminService::audit(const char* action, const QString& target, bool ok,
                                 detail.isEmpty() ? QString() : QStringLiteral(" detail=") + detail);
   if (ok) qCInfo(lcAudit).noquote() << line;
   else qCWarning(lcAudit).noquote() << line;
+  if (audit_) {
+    // 来源主机：服务端界面运行在哪台主机上，操作就是从哪台主机发出的
+    audit_->append(categoryOf(action), ok ? QStringLiteral("INFO") : QStringLiteral("WARN"), actor,
+                   AuditService::localSource(), QString(),
+                   QStringLiteral("action=%1 target=%2 result=%3%4")
+                       .arg(QString::fromLatin1(action),
+                            target.isEmpty() ? QStringLiteral("-") : target,
+                            ok ? QStringLiteral("ok") : QStringLiteral("fail"),
+                            detail.isEmpty() ? QString() : QStringLiteral(" detail=") + detail));
+  }
+}
+
+bool AdminService::confirmPassword(const SecureBuffer& password, const char* action,
+                                   const QString& target, QString* error) {
+  // 用当前账号自己的口令确认。输错同样计入失败次数，连续输错 5 次账号锁定并退出登录
+  const QString username = current_.username;
+  const AuthResult check = auth_->verify(username, password, nullptr);
+  if (check == AuthResult::Ok) return true;
+  *error = check == AuthResult::Locked ? QStringLiteral("账号已锁定，操作未执行")
+                                       : QStringLiteral("口令不正确，操作未执行");
+  audit(action, target, false, QStringLiteral("password confirmation failed"));
+  if (check == AuthResult::Locked) logout();
+  return false;
 }
 
 bool AdminService::authorize(Permission permission, const char* action, const QString& target,
@@ -240,21 +273,141 @@ bool AdminService::importFirmware(const QString& path, QString* error) {
   return true;
 }
 
-// ---------- 下发 ----------
+// ---------- 单台下发 ----------
 
 bool AdminService::dispatchFirmware(const QString& pkgId, const QString& deviceId,
-                                    QString* error) {
+                                    const SecureBuffer& password, QString* error) {
   if (!authorize(Permission::ManageRelease, "dispatch", deviceId, error)) return false;
   if (!rollout_) {
     *error = QStringLiteral("发布模块不可用");
     return false;
   }
+  if (!confirmPassword(password, "dispatch", deviceId, error)) return false;
   qint64 releaseId = 0;
   const bool ok = rollout_->dispatchToDevice(pkgId, deviceId, current_.username, &releaseId, error);
   audit("dispatch", deviceId, ok,
-        ok ? QStringLiteral("release=%1 pkg=%2").arg(releaseId).arg(pkgId)
+        ok ? QStringLiteral("release=%1 pkg=%2 confirmed=password").arg(releaseId).arg(pkgId)
            : QStringLiteral("pkg=%1 reason=%2").arg(pkgId.left(36), *error));
   return ok;
+}
+
+// ---------- 灰度发布 ----------
+
+bool AdminService::createRelease(const QString& pkgId, const QStringList& canaryDevices,
+                                 const QString& canaryGroup, int concurrency, qint64* releaseId,
+                                 QString* error) {
+  if (!authorize(Permission::ManageRelease, "release_create", pkgId.left(36), error)) return false;
+  if (!rollout_) {
+    *error = QStringLiteral("发布模块不可用");
+    return false;
+  }
+  if (!isValidTag(canaryGroup, true)) {
+    *error = QStringLiteral("分组名不合法");
+    return false;
+  }
+  const bool ok = rollout_->createRelease(pkgId, canaryDevices, canaryGroup, concurrency,
+                                          current_.username, releaseId, error);
+  audit("release_create", ok ? QStringLiteral("#%1").arg(*releaseId) : pkgId.left(36), ok,
+        ok ? QStringLiteral("pkg=%1 canary=%2 group=%3 concurrency=%4")
+                 .arg(pkgId, canaryDevices.join(QLatin1Char(',')).left(200),
+                      canaryGroup.isEmpty() ? QStringLiteral("-") : canaryGroup)
+                 .arg(concurrency)
+           : *error);
+  return ok;
+}
+
+bool AdminService::releaseOperation(Permission permission, const char* action, qint64 releaseId,
+                                    const SecureBuffer* password, QString* error,
+                                    const std::function<bool(QString*)>& operation) {
+  const QString target = QStringLiteral("#%1").arg(releaseId);
+  if (!authorize(permission, action, target, error)) return false;
+  if (!rollout_) {
+    *error = QStringLiteral("发布模块不可用");
+    return false;
+  }
+  if (password && !confirmPassword(*password, action, target, error)) return false;
+  const bool ok = operation(error);
+  // 确认方式也记下来：审计时能看出这一步是重新输过口令的
+  audit(action, target, ok,
+        ok ? (password ? QStringLiteral("confirmed=password") : QString()) : *error);
+  return ok;
+}
+
+bool AdminService::startCanary(qint64 releaseId, const SecureBuffer& password, QString* error) {
+  return releaseOperation(Permission::ManageRelease, "release_start_canary", releaseId, &password,
+                          error, [&](QString* e) {
+                            return rollout_->startCanary(releaseId, current_.username, e);
+                          });
+}
+
+bool AdminService::confirmFull(qint64 releaseId, const SecureBuffer& password, QString* error) {
+  return releaseOperation(Permission::ManageRelease, "release_confirm_full", releaseId, &password,
+                          error, [&](QString* e) {
+                            return rollout_->confirmFull(releaseId, current_.username, e);
+                          });
+}
+
+bool AdminService::resumeRelease(qint64 releaseId, const SecureBuffer& password, QString* error) {
+  return releaseOperation(Permission::ManageRelease, "release_resume", releaseId, &password, error,
+                          [&](QString* e) {
+                            return rollout_->resume(releaseId, current_.username, e);
+                          });
+}
+
+bool AdminService::pushHeldDevices(qint64 releaseId, const SecureBuffer& password,
+                                   QString* error) {
+  return releaseOperation(Permission::ManageRelease, "release_push_held", releaseId, &password,
+                          error, [&](QString* e) {
+                            return rollout_->pushHeld(releaseId, current_.username, e);
+                          });
+}
+
+bool AdminService::terminateRelease(qint64 releaseId, const SecureBuffer& password,
+                                    QString* error) {
+  return releaseOperation(Permission::ManageRelease, "release_terminate", releaseId, &password,
+                          error, [&](QString* e) {
+                            return rollout_->abort(releaseId, current_.username, false, e);
+                          });
+}
+
+bool AdminService::pauseRelease(qint64 releaseId, QString* error) {
+  return releaseOperation(Permission::ManageRelease, "release_pause", releaseId, nullptr, error,
+                          [&](QString* e) {
+                            return rollout_->pause(releaseId, current_.username, e);
+                          });
+}
+
+bool AdminService::emergencyStop(qint64 releaseId, QString* error) {
+  return releaseOperation(Permission::EmergencyStop, "release_emergency_stop", releaseId, nullptr,
+                          error, [&](QString* e) {
+                            return rollout_->abort(releaseId, current_.username, true, e);
+                          });
+}
+
+// ---------- 审计日志 ----------
+
+bool AdminService::recentAudit(int limit, const QString& category, QList<AuditEntry>* entries,
+                               QString* error) {
+  // 查看成功不写审计日志（审计员每次刷新都会调用，记下来只会淹没真正的操作）；被拒照样记录
+  if (!authorize(Permission::ViewAudit, "audit_view", QString(), error)) return false;
+  if (!audit_) {
+    *error = QStringLiteral("审计日志不可用");
+    return false;
+  }
+  *entries = audit_->recent(limit, category);
+  return true;
+}
+
+bool AdminService::verifyAudit(AuditCheck* check, QString* error) {
+  if (!authorize(Permission::ViewAudit, "audit_verify", QString(), error)) return false;
+  if (!audit_) {
+    *error = QStringLiteral("审计日志不可用");
+    return false;
+  }
+  *check = audit_->verify();
+  // 校验本身也留痕：什么时候、谁校验过、结果如何
+  audit("audit_verify", QString(), check->ok, check->detail.left(120));
+  return true;
 }
 
 // ---------- “允许下发”开关 ----------

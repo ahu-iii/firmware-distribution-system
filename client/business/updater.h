@@ -65,6 +65,11 @@ class Updater : public QObject {
   // LOGIN 里和固件有关的三个字段：fw_version、security_version、active_slot（协议 5.1 节）。
   QJsonObject loginFields() const;
 
+  // 当前（或最近一次）升级的包 ID 和发布号，PROGRESS / RESULT / ALERT 事件里上报。
+  // 上电时由 Bootloader 补完的升级（写完分区后断电）进程已经不知道发布号，报 0。
+  const QString& pkgId() const { return pkgId_; }
+  qint64 releaseId() const { return releaseId_; }
+
  signals:
   void stateChanged(fwds::Updater::State state);
   void progressChanged(int percent);
@@ -92,6 +97,7 @@ class Updater : public QObject {
   }
   void setState(State state);
   void reportProgress();
+  void takeIdsFromDownloader();  // 记下 Downloader 最近一条通知的包 ID 和发布号
 
   ClientConfig config_;
   const ManifestVerifier& verifier_;
@@ -117,6 +123,8 @@ class Updater : public QObject {
   // 本次运行中因为启动失败被回滚的包。服务端在设备重新登录后会把同一个包的通知再发一次，
   // 不记住的话设备会一遍遍地写入、重启、回滚
   QString rolledBackPkgId_;
+  QString pkgId_;
+  qint64 releaseId_ = 0;
 };
 
 }  // namespace fwds
