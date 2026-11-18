@@ -32,6 +32,10 @@ class ChunkService : public QObject {
   // 设备在线时同时发送 UPDATE_CANCEL。没有下发记录时返回 false。
   bool cancel(const QString& deviceId, const QString& reason);
 
+  // 设备已经上报了这个包的最终结果（RESULT）：删掉下发记录，不发 UPDATE_CANCEL。
+  // 之后设备重连不会再收到这个包的通知。下发记录不是这个包时什么都不做。
+  void finish(const QString& deviceId, const QString& pkgId);
+
   // 这台设备当前被下发的包 ID；没有则为空串。
   QString assignedPackage(const QString& deviceId) const;
 

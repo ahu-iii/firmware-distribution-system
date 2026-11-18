@@ -165,6 +165,20 @@ bool loadServerConfig(const QString& path, ServerConfig* out, QString* error) {
       !readInt(s, QStringLiteral("server/login_lock_s"), 1, 86400, &cfg.loginLockS, error)) {
     return false;
   }
+  cfg.auditCheckpointFile =
+      s.value(QStringLiteral("server/audit_checkpoint_file")).toString().trimmed();
+  if (cfg.auditCheckpointFile.isEmpty()) {
+    cfg.auditCheckpointFile = cfg.dbFile + QStringLiteral(".audit-checkpoint");
+  }
+  // 灰度发布：观察期最长 1 天；同时推送台数 1 ~ 100；失败比例阈值 0 ~ 100（0 表示全量阶段失败一台就暂停）
+  int observeS = cfg.rollout.observeMs / 1000;
+  if (!readInt(s, QStringLiteral("rollout/observe_s"), 1, 86400, &observeS, error) ||
+      !readInt(s, QStringLiteral("rollout/concurrency"), 1, 100, &cfg.rollout.concurrency, error) ||
+      !readInt(s, QStringLiteral("rollout/max_failure_pct"), 0, 100, &cfg.rollout.maxFailurePct,
+               error)) {
+    return false;
+  }
+  cfg.rollout.observeMs = observeS * 1000;
   cfg.logLevel = s.value(QStringLiteral("log/level"), cfg.logLevel).toString().trimmed().toUpper();
   if (!readProtocol(s, &cfg.protocol, error)) return false;
   if (!readTls(s, QStringLiteral("server"), &cfg.tls, error)) return false;

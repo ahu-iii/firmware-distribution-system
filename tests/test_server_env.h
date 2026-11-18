@@ -10,6 +10,7 @@
 #include "server/business/device_registry.h"
 #include "server/business/dispatch_gate.h"
 #include "server/business/login_throttle.h"
+#include "server/security/audit_service.h"
 #include "server/security/operator_auth.h"
 #include "server/storage/database.h"
 #include "tests/test_fsk.h"
@@ -35,7 +36,9 @@ struct ServerBackend {
     EXPECT_TRUE(db.open(dbPath, &error)) << error.toStdString();
     EXPECT_TRUE(registry.load(&error)) << error.toStdString();
     EXPECT_TRUE(firmware.load(&error)) << error.toStdString();
+    EXPECT_TRUE(audit.load(&error)) << error.toStdString();
     admin.setFirmwareRepo(&firmware);
+    admin.setAuditService(&audit);
   }
 
   // 建一个维护员并登录（账号表已有账号时直接登录）。
@@ -90,6 +93,8 @@ struct ServerBackend {
   QTemporaryDir ownLibraryDir;
   fwds::ManifestVerifier fskVerifier = trustedVerifier();
   fwds::FirmwareRepo firmware;  // 初始化用到上面两个成员，必须排在它们后面
+  // 审计日志：检查点文件放在临时目录里
+  fwds::AuditService audit{&db, ownLibraryDir.filePath(QStringLiteral("audit.checkpoint"))};
   // 登录失败锁定：默认 5 次 / 5 分钟 / 10 分钟，与设计一致
   fwds::LoginThrottle throttle{5, 5 * 60 * 1000, 10 * 60 * 1000};
 };

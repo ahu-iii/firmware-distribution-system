@@ -83,12 +83,13 @@ class TestPki {
   qint64 crlNumber_ = 0;
 };
 
-// 各测试共用的一套证书：CA、127.0.0.1 的服务端证书、DEV-001 的设备证书。
+// 各测试共用的一套证书：CA、127.0.0.1 的服务端证书、DEV-001 ~ DEV-003 的设备证书。
 struct SharedPki {
   TestPki pki;
   Identity server = pki.issue(fwds::CertType::Server, QStringLiteral("127.0.0.1"));
   Identity dev001 = pki.issue(fwds::CertType::Device, QStringLiteral("DEV-001"));
   Identity dev002 = pki.issue(fwds::CertType::Device, QStringLiteral("DEV-002"));
+  Identity dev003 = pki.issue(fwds::CertType::Device, QStringLiteral("DEV-003"));
 };
 
 inline SharedPki& sharedPki() {

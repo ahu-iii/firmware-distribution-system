@@ -34,6 +34,30 @@ SecureBuffer takePassword(QLineEdit* edit) {
   return password;
 }
 
+bool askConfirmPassword(QWidget* parent, const QString& title, const QString& text,
+                        SecureBuffer* password) {
+  QDialog dialog(parent);
+  dialog.setWindowTitle(title);
+  dialog.setMinimumWidth(420);
+  auto* description = new QLabel(text, &dialog);
+  description->setWordWrap(true);
+  auto* edit = newPasswordEdit(&dialog);
+  auto* form = new QFormLayout;
+  form->addRow(QStringLiteral("当前账号口令"), edit);
+  auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+  buttons->button(QDialogButtonBox::Ok)->setText(QStringLiteral("确认执行"));
+  buttons->button(QDialogButtonBox::Cancel)->setText(QStringLiteral("取消"));
+  auto* layout = new QVBoxLayout(&dialog);
+  layout->addWidget(description);
+  layout->addLayout(form);
+  layout->addWidget(buttons);
+  QObject::connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+  QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+  const bool accepted = dialog.exec() == QDialog::Accepted;
+  *password = takePassword(edit);  // 无论确认与否都从输入框取走并清空
+  return accepted;
+}
+
 // ---------- LoginDialog ----------
 
 LoginDialog::LoginDialog(AdminService* admin, QWidget* parent)
