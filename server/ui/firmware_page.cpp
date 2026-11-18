@@ -14,6 +14,7 @@
 #include <QPushButton>
 #include <QSplitter>
 #include <QTableWidget>
+#include <QTimer>
 #include <QTextEdit>
 #include <QVBoxLayout>
 
@@ -41,9 +42,16 @@ QTableWidget* makeTable(const QStringList& headers, QWidget* parent) {
   table->setSelectionMode(QAbstractItemView::SingleSelection);
   table->setEditTriggers(QAbstractItemView::NoEditTriggers);
   table->verticalHeader()->setVisible(false);
-  table->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
+  // 列宽在每次重填后按内容调整一次（见 BUG-009），不用 ResizeToContents：
+  // 那样每改一个格子都要把整列重新量一遍，进度事件一多界面就卡
+  table->horizontalHeader()->setSectionResizeMode(QHeaderView::Interactive);
   table->horizontalHeader()->setStretchLastSection(true);
   return table;
+}
+
+// 重填后按内容调整列宽。最后一列不调：它是拉伸列，单独调整会让它不再填满表格
+void fitColumns(QTableWidget* table) {
+  for (int col = 0; col + 1 < table->columnCount(); ++col) table->resizeColumnToContents(col);
 }
 
 // 下发记录的状态一列：设备的状态，加上说明（失败原因、待确认的原因等）。
@@ -112,7 +120,14 @@ FirmwarePage::FirmwarePage(FirmwareRepo* firmware, RolloutManager* rollout,
   layout->addWidget(splitter);
 
   connect(firmware_, &FirmwareRepo::changed, this, &FirmwarePage::refreshFirmware);
-  connect(rollout_, &RolloutManager::changed, this, &FirmwarePage::refreshDispatches);
+  // 同发布页：进度事件合并后再重填下发记录（BUG-009）
+  dispatchTimer_ = new QTimer(this);
+  dispatchTimer_->setSingleShot(true);
+  dispatchTimer_->setInterval(kRefreshCoalesceMs);
+  connect(dispatchTimer_, &QTimer::timeout, this, &FirmwarePage::refreshDispatches);
+  connect(rollout_, &RolloutManager::changed, this, [this]() {
+    if (!dispatchTimer_->isActive()) dispatchTimer_->start();
+  });
   refreshFirmware();
   refreshDispatches();
   applyPermissions();
@@ -156,6 +171,7 @@ void FirmwarePage::refreshFirmware() {
     if (m.pkgId == keep) selectRow = row;
   }
   if (selectRow >= 0) table_->selectRow(selectRow);
+  fitColumns(table_);
   showDetail();
 }
 
@@ -212,6 +228,7 @@ void FirmwarePage::refreshDispatches() {
       dispatches_->setItem(row, col, new QTableWidgetItem(cells.at(col)));
     }
   }
+  fitColumns(dispatches_);
 }
 
 void FirmwarePage::importPackage() {

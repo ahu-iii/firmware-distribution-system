@@ -1,4 +1,5 @@
-// 升级相关消息体的编码和解析（协议文档 5.4 ~ 5.6 节）：
+// 升级相关消息体的编码和解析（协议文档 5.3 ~ 5.6 节）：
+//   HEARTBEAT                      设备 → 服务端，JSON（服务端检查格式）
 //   UPDATE_NOTIFY / UPDATE_CANCEL  服务端 → 设备，JSON
 //   CHUNK_REQ                      设备 → 服务端，JSON
 //   CHUNK_DATA                     服务端 → 设备，二进制
@@ -19,6 +20,16 @@ inline constexpr int kMaxChunkWindow = 16;        // 一次 CHUNK_REQ 最多请�
 // 字符串格式不对时 packageIdToBytes 返回空数组。
 QByteArray packageIdToBytes(const QString& pkgId);
 QString packageIdFromBytes(const QByteArray& bytes);
+
+// ---- HEARTBEAT（0x10）----
+struct HeartbeatStatus {
+  QString state;      // 设备当前的升级状态，如 IDLE、DOWNLOADING，最长 32 个字符
+  int progress = 0;   // 当前阶段的进度百分比，-1 表示没有
+  qint64 uptime = 0;  // 设备程序已运行的秒数
+};
+// 三个字段齐全、类型正确、取值在范围内才返回 true（协议 5.3 节）。
+// 不合格的心跳服务端回复 1005 并丢弃：不应答、不算作一次心跳。
+bool parseHeartbeat(const QByteArray& body, HeartbeatStatus* out);
 
 // ---- UPDATE_NOTIFY（0x20）----
 struct UpdateNotify {

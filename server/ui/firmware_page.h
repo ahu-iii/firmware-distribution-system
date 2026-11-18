@@ -15,6 +15,7 @@ class QLabel;
 class QPushButton;
 class QTableWidget;
 class QTextEdit;
+class QTimer;
 
 namespace fwds {
 
@@ -45,6 +46,10 @@ class FirmwarePage : public QWidget {
   QTableWidget* table_;
   QTextEdit* detail_;
   QTableWidget* dispatches_;
+  QTimer* dispatchTimer_;
+
+ public:
+  static constexpr int kRefreshCoalesceMs = 500;
 };
 
 }  // namespace fwds

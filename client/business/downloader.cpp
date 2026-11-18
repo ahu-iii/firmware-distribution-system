@@ -172,6 +172,9 @@ void Downloader::onChunkData(const QByteArray& body) {
   if (chunkMatches(manifest_, chunk.index, chunk.data)) {
     QString error;
     if (!store_->writeChunk(chunk.index, chunk.data, &error)) {
+      // 下载途中磁盘被写满（开始时空间够，之后被别的文件占了）：删掉下了一半的文件把空间还回去，
+      // 否则设备连事件、日志都写不进去（BUG-008）。之后重新下发从头下载
+      store_->discard();
       fail(ErrorCode::DiskFull, error, false);
       return;
     }

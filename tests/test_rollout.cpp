@@ -4,9 +4,14 @@
 //   ST-25 互锁冲突注入        ST-26 紧急停止              ST-27 断网不盲发
 //   FT-15 服务端重启恢复
 // 另外：“允许下发”被关闭、安全告警、全量失败比例超阈值时自动暂停；手动暂停与继续；角色。
+#include <QApplication>
+#include <QHeaderView>
+#include <QTableWidget>
 #include <QTemporaryDir>
 #include <gtest/gtest.h>
 
+#include "server/ui/firmware_page.h"
+#include "server/ui/release_page.h"
 #include "tests/test_live.h"
 #include "tests/test_util.h"
 
@@ -455,4 +460,30 @@ TEST_F(Rollout, ServerRestartPausesAndResumeContinuesDownload) {
   EXPECT_EQ(d1->runningVersion(), QStringLiteral("2.1.0"));
   EXPECT_LT(fx->chunks->chunksSent(), 400 - sentBefore / 2);
   EXPECT_TRUE(audited(QStringLiteral("发布 #%1：重新通知设备（服务端重启前已通知）").arg(id)));
+}
+
+// 回归 BUG-009：灰度发布页、固件页原来每收到一条 RolloutManager::changed（每条进度一次）就重填整张表，
+// 并且列宽是 ResizeToContents。20 台并发时服务端一个核跑满、界面延迟 1.4 秒（测试报告 PT-02）。
+// 现在 changed 合并成最多每 500 ms 重填一次；列宽在重填后按内容调整一次。
+TEST_F(Rollout, ReleaseAndFirmwarePagesCoalesceRefreshes) {
+  LiveServer fx(&backend);
+  const QString pkg = importFirmware(QStringLiteral("2.1.0"), 5);
+  backend.openGateAndLoginAsOperator();
+  ReleasePage releasePage(fx.rollout.get(), &backend.firmware, &backend.registry, &backend.admin);
+  FirmwarePage firmwarePage(&backend.firmware, fx.rollout.get(), &backend.registry, &backend.admin);
+  QTableWidget* releases = nullptr;  // 发布列表：第一列表头是“发布号”
+  for (QTableWidget* t : releasePage.findChildren<QTableWidget*>()) {
+    if (t->horizontalHeaderItem(0)->text() == QStringLiteral("发布号")) releases = t;
+  }
+  ASSERT_NE(releases, nullptr);
+  EXPECT_EQ(releases->horizontalHeader()->sectionResizeMode(0), QHeaderView::Interactive);
+  ASSERT_EQ(releases->rowCount(), 0);
+
+  // 新建发布会发 changed；页面不当场重填，合并期过后才出现
+  const qint64 id = create(pkg, {kDev1});
+  ASSERT_GT(id, 0);
+  for (int i = 0; i < 50; ++i) emit fx.rollout->changed();
+  QApplication::processEvents();
+  EXPECT_EQ(releases->rowCount(), 0);
+  EXPECT_TRUE(waitFor([&]() { return releases->rowCount() == 1; }, ReleasePage::kRefreshCoalesceMs + 2000));
 }

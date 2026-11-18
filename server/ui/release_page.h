@@ -14,6 +14,7 @@
 class QLabel;
 class QPushButton;
 class QTableWidget;
+class QTimer;
 
 namespace fwds {
 
@@ -57,6 +58,10 @@ class ReleasePage : public QWidget {
   QTableWidget* releases_;
   QTableWidget* targets_;
   QLabel* targetsTitle_;
+  QTimer* refreshTimer_;
+
+ public:
+  static constexpr int kRefreshCoalesceMs = 500;  // 进度引起的重填最多每 500 ms 一次
 };
 
 }  // namespace fwds

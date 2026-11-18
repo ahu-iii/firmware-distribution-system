@@ -167,3 +167,20 @@ TEST(UpdateMessages, ChunkDataLengthIsCheckedBeforeUse) {
 
   EXPECT_EQ(out.index, -7);  // 失败时不改输出
 }
+
+// HEARTBEAT（协议 5.3 节）：设备实际发出的格式能解析，缺字段、类型不对、超范围的都拒绝
+TEST(UpdateMessages, HeartbeatParse) {
+  HeartbeatStatus s;
+  ASSERT_TRUE(parseHeartbeat(R"({"state":"DOWNLOADING","progress":47,"uptime":3600})", &s));
+  EXPECT_EQ(s.state, QStringLiteral("DOWNLOADING"));
+  EXPECT_EQ(s.progress, 47);
+  EXPECT_EQ(s.uptime, 3600);
+  EXPECT_TRUE(parseHeartbeat(R"({"state":"IDLE","progress":-1,"uptime":0,"extra":1})", &s));
+  for (const char* bad : {"", "null", "[]", "{}", R"({"state":"","progress":0,"uptime":0})",
+                          R"({"state":"IDLE","progress":0})", R"({"state":1,"progress":0,"uptime":0})",
+                          R"({"state":"IDLE","progress":-2,"uptime":0})",
+                          R"({"state":"IDLE","progress":0,"uptime":-1})",
+                          R"({"state":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","progress":0,"uptime":0})"}) {
+    EXPECT_FALSE(parseHeartbeat(bad, &s)) << bad;
+  }
+}

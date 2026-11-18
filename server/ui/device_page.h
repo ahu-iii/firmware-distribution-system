@@ -12,6 +12,7 @@
 class QListWidget;
 class QPushButton;
 class QTableView;
+class QTimer;
 
 namespace fwds {
 
@@ -20,6 +21,9 @@ class DeviceTableModel;
 class DevicePage : public QWidget {
   Q_OBJECT
  public:
+  // 设备表变化后多久按内容重新调整一次列宽（毫秒）
+  static constexpr int kColumnFitIntervalMs = 1000;
+
   DevicePage(DeviceRegistry* registry, AdminService* admin, QWidget* parent = nullptr);
 
   // 登录账号变化后调用：按角色显示或隐藏管理按钮。
@@ -41,6 +45,7 @@ class DevicePage : public QWidget {
   AdminService* admin_;
   DeviceTableModel* model_;
   QTableView* table_;
+  QTimer* fitTimer_;  // 列宽调整的合并定时器
   QListWidget* events_;
   QPushButton* registerButton_;
   QPushButton* disableButton_;

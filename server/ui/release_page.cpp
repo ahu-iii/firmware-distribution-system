@@ -14,6 +14,7 @@
 #include <QSpinBox>
 #include <QSplitter>
 #include <QTableWidget>
+#include <QTimer>
 #include <QVBoxLayout>
 
 #include "server/ui/login_dialog.h"
@@ -39,9 +40,16 @@ QTableWidget* makeTable(const QStringList& headers, QWidget* parent) {
   table->setSelectionMode(QAbstractItemView::SingleSelection);
   table->setEditTriggers(QAbstractItemView::NoEditTriggers);
   table->verticalHeader()->setVisible(false);
-  table->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
+  // 列宽在每次重填后按内容调整一次（见 BUG-009），不用 ResizeToContents：
+  // 那样每改一个格子都要把整列重新量一遍，进度事件一多界面就卡
+  table->horizontalHeader()->setSectionResizeMode(QHeaderView::Interactive);
   table->horizontalHeader()->setStretchLastSection(true);
   return table;
+}
+
+// 重填后按内容调整列宽。最后一列不调：它是拉伸列，单独调整会让它不再填满表格
+void fitColumns(QTableWidget* table) {
+  for (int col = 0; col + 1 < table->columnCount(); ++col) table->resizeColumnToContents(col);
 }
 
 // 状态的颜色：暂停、终止标红，完成标绿，其余默认。
@@ -158,7 +166,15 @@ ReleasePage::ReleasePage(RolloutManager* rollout, FirmwareRepo* firmware, Device
     refreshTargets();
     updateButtons();
   });
-  connect(rollout_, &RolloutManager::changed, this, &ReleasePage::refresh);
+  // 每条进度都会发 changed。合并成最多每 kRefreshCoalesceMs 重填一次（BUG-009）；
+  // 本页按钮触发的操作仍然立刻 refresh()
+  refreshTimer_ = new QTimer(this);
+  refreshTimer_->setSingleShot(true);
+  refreshTimer_->setInterval(kRefreshCoalesceMs);
+  connect(refreshTimer_, &QTimer::timeout, this, &ReleasePage::refresh);
+  connect(rollout_, &RolloutManager::changed, this, [this]() {
+    if (!refreshTimer_->isActive()) refreshTimer_->start();
+  });
   // 设备上下线会改变“推送待确认设备”是否有意义，顺带刷新一下按钮
   connect(registry_, &DeviceRegistry::deviceChanged, this, &ReleasePage::updateButtons);
   refresh();
@@ -241,6 +257,7 @@ void ReleasePage::refresh() {
     if (r.releaseId == keep) selectRow = row;
   }
   if (selectRow >= 0) releases_->selectRow(selectRow);
+  fitColumns(releases_);
   refreshTargets();
   updateButtons();
 }
@@ -269,6 +286,7 @@ void ReleasePage::refreshTargets() {
       targets_->setItem(row, col, item);
     }
   }
+  fitColumns(targets_);
 }
 
 void ReleasePage::confirmAndRun(const QString& title, const QString& text,

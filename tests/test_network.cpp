@@ -5,6 +5,7 @@
 #include <QSslSocket>
 #include <QTcpServer>
 #include <QTcpSocket>
+#include <tuple>
 #include <gtest/gtest.h>
 
 #include "client/net/tcp_client.h"
@@ -41,6 +42,9 @@ QByteArray wire(MsgType type, quint64 seq, const QByteArray& body) {
   encodeFrame(static_cast<quint8>(type), seq, body, &out);
   return out;
 }
+
+// 合法的心跳消息体（协议 5.3 节）。格式不对的心跳服务端回 1005 并丢弃
+const QByteArray kHeartbeatBody = R"({"state":"IDLE","progress":0,"uptime":1})";
 
 int errorCodeOf(const Frame& frame) {
   return QJsonDocument::fromJson(frame.body).object().value(QStringLiteral("code")).toInt();
@@ -194,7 +198,7 @@ TEST(Network, StickyAndSplitFramesOverSocket) {
   ServerFixture fx;
   RawPeer peer(fx.port());
   const QByteArray stream = wire(MsgType::Login, 1, loginBody()) +
-                            wire(MsgType::Heartbeat, 2, "{}") + wire(MsgType::Heartbeat, 3, "{}");
+                            wire(MsgType::Heartbeat, 2, kHeartbeatBody) + wire(MsgType::Heartbeat, 3, kHeartbeatBody);
   peer.write(stream.left(20));
   spin(50);
   peer.write(stream.mid(20));
@@ -253,7 +257,7 @@ TEST(Network, FirstFrameMustHaveSeqOne) {
 TEST(Network, ReplayedFrameIsRejectedWithSeqError) {
   ServerFixture fx;
   RawPeer peer(fx.port());
-  const QByteArray heartbeat = wire(MsgType::Heartbeat, 2, "{}");
+  const QByteArray heartbeat = wire(MsgType::Heartbeat, 2, kHeartbeatBody);
   peer.write(wire(MsgType::Login, 1, loginBody()));
   peer.write(heartbeat);
   ASSERT_TRUE(waitFor([&]() { return fx.heartbeats == 1; }));
@@ -271,11 +275,63 @@ TEST(Network, SkippedSeqIsRejected) {
   ServerFixture fx;
   RawPeer peer(fx.port());
   peer.write(wire(MsgType::Login, 1, loginBody()));
-  peer.write(wire(MsgType::Heartbeat, 3, "{}"));
+  peer.write(wire(MsgType::Heartbeat, 3, kHeartbeatBody));
   const QList<Frame> frames = peer.readUntilClosed();
   ASSERT_EQ(frames.size(), 2);
   EXPECT_EQ(errorCodeOf(frames[1]), 1007);
   EXPECT_EQ(fx.heartbeats, 0);
+}
+
+// ET-01：登录之后再发 Magic 错误、版本为 9 的帧，同样回 ERROR 并断开
+TEST(Network, BadHeaderAfterLoginClosesConnection) {
+  for (const auto& [name, patch, code] :
+       {std::make_tuple("BadMagic", 0, 1001), std::make_tuple("BadVersion", 2, 1002)}) {
+    SCOPED_TRACE(name);
+    ServerFixture fx;
+    RawPeer peer(fx.port());
+    peer.write(wire(MsgType::Login, 1, loginBody()));
+    ASSERT_TRUE(waitFor([&]() { return fx.onlineCount() == 1; }));
+    QByteArray bad = wire(MsgType::Heartbeat, 2, kHeartbeatBody);
+    if (patch == 0) bad[0] = 'X';
+    else bad[2] = 9;
+    peer.write(bad);
+    const QList<Frame> frames = peer.readUntilClosed();
+    EXPECT_TRUE(peer.closedByPeer);
+    ASSERT_EQ(frames.size(), 2);  // LOGIN_RESULT、ERROR
+    EXPECT_EQ(errorCodeOf(frames[1]), code);
+  }
+}
+
+// ET-02：心跳消息体不是 JSON、缺字段或类型不对，回 1005、不算心跳，连接不断开（协议 5.3 节）。
+// 回归 BUG-007：原来格式不对的心跳照常应答
+TEST(Network, MalformedHeartbeatGetsBadJsonAndIsNotCounted) {
+  ServerFixture fx;
+  RawPeer peer(fx.port());
+  peer.write(wire(MsgType::Login, 1, loginBody()));
+  ASSERT_TRUE(waitFor([&]() { return fx.onlineCount() == 1; }));
+  const QList<QByteArray> bad = {
+      "{\"state\":\"IDLE\",",                                  // 不完整的 JSON
+      "[1,2,3]",                                                // 不是对象
+      "{}",                                                     // 缺字段
+      R"({"state":12345,"progress":"many","uptime":null})",    // 类型不对
+      R"({"state":"IDLE","progress":101,"uptime":1})",         // 进度超范围
+      R"({"state":"IDLE","progress":0.5,"uptime":1})",         // 不是整数
+  };
+  quint64 seq = 2;
+  for (const QByteArray& body : bad) peer.write(wire(MsgType::Heartbeat, seq++, body));
+  peer.write(wire(MsgType::Heartbeat, seq++, kHeartbeatBody));  // 最后一个是合法的
+  QList<Frame> frames;
+  ASSERT_TRUE(waitFor([&]() {
+    frames += peer.drain();
+    return frames.size() == 1 + bad.size() + 1;
+  }));
+  for (int i = 1; i <= bad.size(); ++i) {
+    EXPECT_EQ(frames[i].type, static_cast<quint8>(MsgType::Error));
+    EXPECT_EQ(errorCodeOf(frames[i]), 1005);
+  }
+  EXPECT_EQ(frames.last().type, static_cast<quint8>(MsgType::HeartbeatAck));
+  EXPECT_EQ(fx.heartbeats, 1);  // 只有合法的那一个算心跳
+  EXPECT_EQ(fx.onlineCount(), 1);
 }
 
 // ---------- 连接状态机 ----------
@@ -283,7 +339,7 @@ TEST(Network, SkippedSeqIsRejected) {
 TEST(Network, MessageBeforeLoginIsUnexpected) {
   ServerFixture fx;
   RawPeer peer(fx.port());
-  peer.write(wire(MsgType::Heartbeat, 1, "{}"));
+  peer.write(wire(MsgType::Heartbeat, 1, kHeartbeatBody));
   const QList<Frame> frames = peer.readUntilClosed();
   ASSERT_EQ(frames.size(), 1);
   EXPECT_EQ(errorCodeOf(frames[0]), 1004);

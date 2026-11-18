@@ -102,9 +102,41 @@ TEST_F(ResumeStoreTest, FreshDownloadCreatesFilesOfFullSize) {
   ASSERT_TRUE(store.open(manifest, raw, &error)) << error.toStdString();
   EXPECT_EQ(store.bitmap().size(), 5);
   EXPECT_EQ(store.bitmap().doneCount(), 0);
-  EXPECT_EQ(QFileInfo(store.partPath()).size(), image.size());  // 一开始就预留了整个镜像的空间
+  EXPECT_EQ(QFileInfo(store.partPath()).size(), image.size());  // 文件一开始就撑到镜像大小
   EXPECT_TRUE(QFile::exists(store.statePath()));
   EXPECT_TRUE(store.partPath().endsWith(manifest.pkgId + QStringLiteral(".part")));
+}
+
+// ET-04 / BUG-008：可用空间不够“下载缓存 + 写入分区”两份镜像时，开始下载前就拒绝，什么都不写。
+// 原来只靠把 .part 撑大来发现空间不足，但多数文件系统撑大时不真正分配，要等写到一半才失败
+TEST_F(ResumeStoreTest, NotEnoughSpaceIsRefusedBeforeAnythingIsWritten) {
+  ResumeStore store(downloadDir());
+  const qint64 needed = 2 * image.size();
+  store.setFreeSpaceProbe([needed](const QString&) { return needed - 1; });
+  EXPECT_FALSE(store.open(manifest, raw, &error));
+  EXPECT_TRUE(error.contains(QStringLiteral("磁盘空间不足"))) << error.toStdString();
+  EXPECT_FALSE(store.isOpen());
+  EXPECT_FALSE(QFile::exists(store.partPath()));
+  EXPECT_FALSE(QFile::exists(store.statePath()));
+
+  store.setFreeSpaceProbe([needed](const QString&) { return needed; });
+  EXPECT_TRUE(store.open(manifest, raw, &error)) << error.toStdString();
+}
+
+// 续传时只需要剩下没下载的部分加一个镜像
+TEST_F(ResumeStoreTest, ResumeNeedsSpaceOnlyForTheRest) {
+  {
+    ResumeStore store(downloadDir());
+    ASSERT_TRUE(store.open(manifest, raw, &error));
+    write(&store, 0);
+    write(&store, 1);
+    store.close();
+  }
+  ResumeStore store(downloadDir());
+  const qint64 rest = image.size() - 2 * kChunkSize + image.size();
+  store.setFreeSpaceProbe([rest](const QString&) { return rest; });
+  ASSERT_TRUE(store.open(manifest, raw, &error)) << error.toStdString();
+  EXPECT_EQ(store.bitmap().doneCount(), 2);
 }
 
 // 进度不只在内存里：写了几片之后直接销毁对象（相当于进程退出），重新打开能看到进度

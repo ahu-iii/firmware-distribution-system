@@ -5,6 +5,7 @@
 
 #include "common/log.h"
 #include "common/net/channel_security.h"
+#include "common/update_messages.h"
 
 namespace fwds {
 
@@ -108,6 +109,13 @@ void Session::onFrame(const Frame& frame) {
 
   switch (type) {
     case MsgType::Heartbeat: {
+      // 消息体格式不对：回复 1005 并丢弃（协议 5.3 节），不应答、不刷新心跳计时，连接不断开
+      HeartbeatStatus status;
+      if (!parseHeartbeat(frame.body, &status)) {
+        qCWarning(lcNet) << "session" << id_ << "malformed HEARTBEAT body, replied 1005";
+        sendError(ErrorCode::BadJson);
+        break;
+      }
       lastHeartbeat_ = QDateTime::currentDateTimeUtc();
       heartbeatTimer_.start(params_.heartbeatTimeoutMs);
       QJsonObject ack;

@@ -4,6 +4,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QSaveFile>
+#include <QStorageInfo>
 
 #include "client/storage/file_sync.h"
 #include "common/crypto/sha256.h"
@@ -13,7 +14,9 @@
 namespace fwds {
 
 ResumeStore::ResumeStore(const QString& downloadDir, int saveEveryChunks)
-    : dir_(downloadDir), saveEveryChunks_(qMax(1, saveEveryChunks)) {}
+    : dir_(downloadDir),
+      saveEveryChunks_(qMax(1, saveEveryChunks)),
+      freeSpace_([](const QString& dir) { return QStorageInfo(dir).bytesAvailable(); }) {}
 
 ResumeStore::~ResumeStore() { close(); }
 
@@ -40,11 +43,23 @@ bool ResumeStore::open(const Manifest& manifest, const QByteArray& manifestRaw, 
     bitmap_ = ChunkBitmap(manifest.chunkCount);
   }
 
+  // 先算空间：还没下载的部分（.part 是稀疏文件，没写过的片不占盘）加上写入分区的一整个镜像。
+  // 只靠下面把文件撑到镜像大小发现不了空间不足（多数文件系统上撑大不真正分配，BUG-008）
+  const qint64 downloaded = static_cast<qint64>(bitmap_.doneCount()) * manifest.chunkSize;
+  const qint64 needed = qMax<qint64>(0, manifest.imageSize - downloaded) + manifest.imageSize;
+  const qint64 available = freeSpace_(dir_);
+  if (available >= 0 && available < needed) {
+    *error = QStringLiteral("磁盘空间不足：升级需要 %1 MB，可用 %2 MB")
+                 .arg(needed / 1048576.0, 0, 'f', 1)
+                 .arg(available / 1048576.0, 0, 'f', 1);
+    return false;
+  }
+
   if (!part_.open(QIODevice::ReadWrite)) {
     *error = QStringLiteral("无法打开 %1：%2").arg(part_.fileName(), part_.errorString());
     return false;
   }
-  // 一开始就把文件撑到镜像大小：空间不够在这里就能发现，之后每一片按偏移写入
+  // 把文件撑到镜像大小，之后每一片按偏移写入
   if (part_.size() != manifest.imageSize && !part_.resize(manifest.imageSize)) {
     *error = QStringLiteral("无法为下载文件预留 %1 字节").arg(manifest.imageSize);
     part_.close();
