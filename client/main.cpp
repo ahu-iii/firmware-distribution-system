@@ -172,18 +172,19 @@ int main(int argc, char* argv[]) {
     return hb;
   });
 
+  // 上电：Bootloader 验签并选定运行的分区，然后才建界面、联网。
+  // 界面构造时读取当前固件和分区，所以必须在上电之后建，否则显示的是上电前的空状态（联调时发现）
+  updater.powerOn();
+  if (!updater.bootState().hasFirmware) {
+    qCCritical(fwds::lcApp) << "no bootable firmware, recovery mode: waiting for the server to push one";
+  }
+
   std::unique_ptr<fwds::MainWindow> window;
   if (!headless) {
     window = std::make_unique<fwds::MainWindow>(config, &client, &updater, &outbox);
     window->show();
   }
   QObject::connect(app.get(), &QCoreApplication::aboutToQuit, &client, [&client]() { client.stop(); });
-
-  // 上电：Bootloader 验签并选定运行的分区，然后才联网
-  updater.powerOn();
-  if (!updater.bootState().hasFirmware) {
-    qCCritical(fwds::lcApp) << "no bootable firmware, recovery mode: waiting for the server to push one";
-  }
   client.start();
   return app->exec();
 }

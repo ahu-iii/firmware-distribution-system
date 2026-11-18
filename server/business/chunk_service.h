@@ -58,6 +58,7 @@ class ChunkService : public QObject {
   ProtocolParams params_;
   QHash<QString, Session*> online_;         // 设备 ID → 它当前已登录的会话
   QHash<QString, Assignment> assignments_;  // 设备 ID → 当前下发给它的包
+  QHash<QString, QString> cancelled_;       // 设备 ID → 最近一次被取消的包 ID（区分在途请求和越权请求）
   qint64 chunksSent_ = 0;
 };
 

@@ -44,6 +44,7 @@ bool ChunkService::cancel(const QString& deviceId, const QString& reason) {
     session->send(MsgType::UpdateCancel, encodeUpdateCancel(message));
   }
   qCInfo(lcApp).noquote() << "update cancelled for" << deviceId << "reason:" << reason;
+  cancelled_.insert(deviceId, it->package.manifest.pkgId);
   assignments_.erase(it);
   return true;
 }
@@ -97,7 +98,15 @@ void ChunkService::handleChunkRequest(Session* session, const QByteArray& body) 
   const QString deviceId = session->deviceId();
   const auto it = assignments_.constFind(deviceId);
   if (it == assignments_.constEnd() || it->package.manifest.pkgId != request.pkgId) {
-    qCWarning(lcSecurity).noquote() << "device" << deviceId << "requested a package not assigned to it";
+    // 刚取消的包：设备在收到 UPDATE_CANCEL 之前发出的请求还在路上，属于正常的先后顺序，
+    // 不记安全事件（用例 ST-26 联调时发现）。其余情况才是越权请求
+    if (it == assignments_.constEnd() && cancelled_.value(deviceId) == request.pkgId) {
+      qCInfo(lcApp).noquote() << "device" << deviceId
+                              << "requested a chunk of the package just cancelled, ignored";
+    } else {
+      qCWarning(lcSecurity).noquote() << "device" << deviceId
+                                      << "requested a package not assigned to it";
+    }
     session->sendError(ErrorCode::PkgNotFound);
     return;
   }

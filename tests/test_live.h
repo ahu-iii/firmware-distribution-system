@@ -39,9 +39,10 @@ inline fwds::ProtocolParams fastParams() {
 
 // 服务端：和 fwds-server 的 main 一样接线，只是没有界面。
 struct LiveServer {
-  explicit LiveServer(ServerBackend* backend) : backend(backend) {
+  // port 为 0 时随机选端口；模拟服务端重启时传入上一次的端口，设备不用改配置就能重连
+  explicit LiveServer(ServerBackend* backend, quint16 port = 0) : backend(backend) {
     config.listenAddress = QHostAddress::LocalHost;
-    config.listenPort = 0;
+    config.listenPort = port;
     config.maxConnectionsPerIp = 50;
     config.protocol = fastParams();
     config.rollout.observeMs = 300;  // 观察期缩短到 0.3 秒

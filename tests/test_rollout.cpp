@@ -2,6 +2,7 @@
 // 覆盖的用例：
 //   FT-11 灰度正常推进        FT-12 金丝雀失败自动暂停    ST-23 二次确认与留痕
 //   ST-25 互锁冲突注入        ST-26 紧急停止              ST-27 断网不盲发
+//   FT-15 服务端重启恢复
 // 另外：“允许下发”被关闭、安全告警、全量失败比例超阈值时自动暂停；手动暂停与继续；角色。
 #include <QTemporaryDir>
 #include <gtest/gtest.h>
@@ -408,4 +409,45 @@ TEST_F(Rollout, OnlyOperatorManagesReleases) {
   backend.loginAsMaintainer();
   EXPECT_FALSE(backend.admin.startCanary(id, pwd("Maint-pass-01"), &error));
   EXPECT_EQ(state(fx, id), QStringLiteral("draft"));
+}
+
+// FT-15：发布推送中服务端重启。重启后发布为“已暂停”，设备重连后不自动接着推；
+// 操作员继续后，重启前已通知、下载到一半的设备收到新的通知，从断点续传，发布完成
+TEST_F(Rollout, ServerRestartPausesAndResumeContinuesDownload) {
+  auto fx = std::make_unique<LiveServer>(&backend);
+  const quint16 port = fx->port();
+  const QString pkg = importFirmware(QStringLiteral("2.1.0"), 5, false, 400);
+  auto d1 = startDevice(*fx, sharedPki().dev001, kDev1);
+  ASSERT_TRUE(ready(kDev1));
+  backend.openGateAndLoginAsOperator();
+  const qint64 id = create(pkg, {kDev1}, 1);
+
+  // 下载到 20% 时让设备先断开（相当于服务端进程在这一刻退出），再停掉服务端
+  bool paused = false;
+  QObject::connect(d1->updater.get(), &Updater::progressChanged, [&](int percent) {
+    if (paused || percent < 20 || d1->updater->state() != Updater::State::Downloading) return;
+    paused = true;
+    d1->client->stop(QStringLiteral("test"));
+  });
+  ASSERT_TRUE(backend.admin.startCanary(id, operPwd(), &error)) << error.toStdString();
+  ASSERT_TRUE(waitFor([&]() { return paused; }, 15000));
+  const qint64 sentBefore = fx->chunks->chunksSent();
+  fx.reset();
+
+  // 重启：进行中的发布改为已暂停，那台设备仍是“已通知”
+  fx = std::make_unique<LiveServer>(&backend, port);
+  EXPECT_EQ(state(*fx, id), QStringLiteral("paused"));
+  EXPECT_EQ(target(*fx, id, kDev1).status, QStringLiteral("notified"));
+  d1->client->start();
+  ASSERT_TRUE(ready(kDev1));
+  spin(500);
+  EXPECT_EQ(d1->updater->state(), Updater::State::Downloading);  // 没有自动接着推
+  EXPECT_EQ(fx->chunks->chunksSent(), 0);
+
+  // 操作员确认继续：设备收到新的通知，从断点接着下载，不从头来；金丝雀成功后照常进入待确认全量
+  ASSERT_TRUE(backend.admin.resumeRelease(id, operPwd(), &error)) << error.toStdString();
+  ASSERT_TRUE(waitState(*fx, id, QStringLiteral("awaiting_full"), 20000));
+  EXPECT_EQ(d1->runningVersion(), QStringLiteral("2.1.0"));
+  EXPECT_LT(fx->chunks->chunksSent(), 400 - sentBefore / 2);
+  EXPECT_TRUE(audited(QStringLiteral("发布 #%1：重新通知设备（服务端重启前已通知）").arg(id)));
 }

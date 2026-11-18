@@ -7,14 +7,17 @@
   flipc N                 同上，方向为客户端→服务端
   record FILE             把第一个连接中客户端→服务端的全部字节存到 FILE，供之后整段回放
   replay N                客户端→服务端第 N 条应用数据记录转发后原样再发一次（只对第一个连接）
+  slow BYTES_PER_S        服务端→客户端限速（模拟慢速链路，让设备较长时间停在下载阶段）
+  gate FILE               FILE 存在期间断网：立即断开所有连接并拒绝新连接；删除 FILE 即恢复
 只记录记录类型和长度，不记录内容。
 """
-import socket, sys, threading, time
+import os, socket, sys, threading, time
 
 listen_port, target_port, mode = int(sys.argv[1]), int(sys.argv[2]), sys.argv[3]
 arg = sys.argv[4:]
 state = {"down_until": 0.0, "conn": 0, "s2c_bytes": 0, "cut_done": False}
 lock = threading.Lock()
+open_pairs = set()  # gate 模式下断网时要关掉的连接
 
 
 def log(msg):
@@ -49,6 +52,8 @@ def pump(src, dst, direction, conn_id, pair):
                 rec = bytes(b)
                 log(f"conn{conn_id} {direction}: flipped 1 bit in application record #{app_count} (len {len(rec) - 5})")
             dst.sendall(rec)
+            if mode == "slow" and direction == "s2c":
+                time.sleep(len(rec) / float(arg[0]))
             if mode == "replay" and direction == "c2s" and conn_id == 1 and rec[0] == 23 and app_count == int(arg[0]):
                 dst.sendall(rec)
                 log(f"conn{conn_id} {direction}: replayed application record #{app_count} (len {len(rec) - 5})")
@@ -64,6 +69,8 @@ def pump(src, dst, direction, conn_id, pair):
         pass
     finally:
         log(f"conn{conn_id} {direction}: closed after {app_count} application records")
+        with lock:
+            open_pairs.discard(pair)
         for s in pair:
             try:
                 s.shutdown(socket.SHUT_RDWR)
@@ -72,7 +79,29 @@ def pump(src, dst, direction, conn_id, pair):
             s.close()
 
 
+def gate_watcher():
+    # gate 模式：FILE 一出现就断开现有连接（模拟拔网线），之后由 accept 拒绝新连接
+    down = False
+    while True:
+        now_down = os.path.exists(arg[0])
+        if now_down != down:
+            log("network down (gate file present)" if now_down else "network up (gate file removed)")
+            down = now_down
+        if now_down:
+            with lock:
+                pairs = list(open_pairs)
+            for pair in pairs:
+                for s in pair:
+                    try:
+                        s.shutdown(socket.SHUT_RDWR)
+                    except OSError:
+                        pass
+        time.sleep(0.1)
+
+
 def main():
+    if mode == "gate":
+        threading.Thread(target=gate_watcher, daemon=True).start()
     srv = socket.socket()
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     srv.bind(("127.0.0.1", listen_port))
@@ -80,7 +109,7 @@ def main():
     log(f"proxy {listen_port} -> {target_port} mode={mode} {arg}")
     while True:
         c, _ = srv.accept()
-        if time.time() < state["down_until"]:
+        if time.time() < state["down_until"] or (mode == "gate" and os.path.exists(arg[0])):
             log("connection refused: network down")
             c.close()
             continue
@@ -94,6 +123,8 @@ def main():
             continue
         log(f"conn{cid} opened")
         pair = (c, s)
+        with lock:
+            open_pairs.add(pair)
         threading.Thread(target=pump, args=(c, s, "c2s", cid, pair), daemon=True).start()
         threading.Thread(target=pump, args=(s, c, "s2c", cid, pair), daemon=True).start()
 
