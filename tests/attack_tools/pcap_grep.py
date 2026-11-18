@@ -9,7 +9,8 @@ pcap = open(sys.argv[1], 'rb').read()
 img = open(sys.argv[2], 'rb').read()
 needles = [b'device_id', b'"type"', b'pkg_id', b'UPDATE_NOTIFY', b'CHUNK', b'security_version',
            b'manifest', b'manifest_sig', b'release_id', b'from_index', b'heartbeat_interval',
-           b'chunk_sha256', b'build_time', b'"code"', b'DEV-001', b'DEV-002', b'DEV-003',
+           b'chunk_sha256', b'build_time', b'"code"', b'UPDATE_CANCEL', b'emergency_stop', b'reason',
+           b'event_seq', b'event_ack', b'DEV-001', b'DEV-002', b'DEV-003', b'DEV-004',
            b'PLC-X200', b'PLC-Y300', b'FWDS', b'IFW1', b'BEGIN']
 # 镜像里的 16 字节片段：开头（镜像头）、中间几处、结尾
 for name, off in [('image@0', 0), ('image@4096', 4096), ('image@1MiB', 1 << 20),

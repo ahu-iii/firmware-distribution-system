@@ -374,6 +374,19 @@ bool RolloutManager::resume(qint64 releaseId, const QString& actor, QString* err
   if (!setState(releaseId, next, error)) return false;
   notes_.remove(releaseId);
   qCInfo(lcApp).noquote() << "release" << releaseId << "resumed by" << actor << "phase" << next;
+  // 服务端重启后分片服务里的下发记录已经没了，“已通知、还没有结果”的设备停在半路，
+  // 不会再收到分片（FT-15 联调时发现）。操作员确认继续后给它们重新发一次通知，
+  // 设备按断点续传接着下载；不在线的记为待确认，上线后由操作员再推
+  for (const QString& deviceId : targetsWithStatus(releaseId, QString(), QStringLiteral("notified"))) {
+    if (chunks_->assignedPackage(deviceId) == r.pkgId) continue;  // 没重启过：下发记录还在
+    if (chunks_->assign(deviceId, releaseId, package)) {
+      lastDispatchAt_.insert(deviceId, QDateTime::currentDateTimeUtc());
+      record(kSystem, deviceId, QStringLiteral("发布 #%1：重新通知设备（服务端重启前已通知）").arg(releaseId), false);
+    } else {
+      setTarget(releaseId, deviceId, QStringLiteral("held"),
+                QStringLiteral("服务端重启前已通知，现在不在线，待确认"));
+    }
+  }
   // 回到灰度阶段时，金丝雀若已全部成功，evaluate 会让它重新进入观察期
   pushPending(releaseId);
   return true;

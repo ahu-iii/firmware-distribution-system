@@ -172,6 +172,15 @@ class ChunkDownload : public ::testing::Test {
 
 }  // namespace
 
+// 记下测试期间 fwds.security 分类的日志行（用来确认某个动作没有被记成安全事件）
+static QStringList& securityLines() {
+  static QStringList lines;
+  return lines;
+}
+static void countSecurityLines(QtMsgType, const QMessageLogContext& context, const QString& message) {
+  if (context.category && qstrcmp(context.category, "fwds.security") == 0) securityLines() << message;
+}
+
 // FT-05：20 片 + 尾片的固件经 TLS 下载完，和原始镜像逐字节一致；服务端设备表能看到状态和进度
 TEST_F(ChunkDownload, DownloadsImageOverTls) {
   Server fx(&backend);
@@ -355,11 +364,17 @@ TEST_F(ChunkDownload, ServerRejectsUnassignedAndOutOfRangeRequests) {
   EXPECT_EQ(fx.chunks->chunksSent(), sentAfterDownload);  // 被拒绝的请求一片都没发
   EXPECT_TRUE(dev.online());
 
-  // 取消下发之后，原来能要的包也要不到了
+  // 取消下发之后，原来能要的包也要不到了。
+  // 这是设备收到 UPDATE_CANCEL 之前就发出的在途请求，回 3009，但不算越权，不记安全日志
   ASSERT_TRUE(fx.chunks->cancel(kDev1, QStringLiteral("emergency_stop")));
+  securityLines().clear();
+  const QtMessageHandler previous = qInstallMessageHandler(countSecurityLines);
   request(pkgId, 0, 1);
-  ASSERT_TRUE(waitErrors(9));
+  const bool answered = waitErrors(9);
+  qInstallMessageHandler(previous);
+  ASSERT_TRUE(answered);
   EXPECT_EQ(dev.serverErrors.last(), 3009);
+  EXPECT_TRUE(securityLines().isEmpty());
 }
 
 // 流控：设备一口气发 200 个请求却不等数据。服务端最多为它缓存两个窗口，其余请求不理会，
