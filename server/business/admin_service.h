@@ -89,7 +89,7 @@ class AdminService : public QObject {
   bool emergencyStop(qint64 releaseId, QString* error);
 
   // ---- 审计日志（审计员）----
-  bool recentAudit(int limit, const QString& category, QList<AuditEntry>* entries, QString* error);
+  bool searchAudit(const AuditFilter& filter, AuditSearchResult* result, QString* error);
   bool verifyAudit(AuditCheck* check, QString* error);
 
   // ---- “允许下发”开关（维护员）----

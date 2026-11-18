@@ -41,6 +41,21 @@ struct AuditEntry {
   QString hash;      // 本行的 hash（十六进制）
 };
 
+// 审计日志的检索条件（设计第 13 章“查看与检索”，用例 FT-16）。空的条件不参与筛选。
+struct AuditFilter {
+  QString category;  // 非空时只要这一类
+  QString deviceId;  // 非空时只要和这台设备有关的：设备字段等于它，或者是对它的管理操作（target=它）
+  QDateTime from;    // 有效时只要这个时间及之后的
+  QDateTime to;      // 有效时只要这个时间及之前的
+  QString keyword;   // 非空时只要内容、操作者、来源、设备里包含它的（英文字母不区分大小写）
+  int limit = 500;
+};
+
+struct AuditSearchResult {
+  QList<AuditEntry> entries;  // 从新到旧
+  bool truncated = false;     // 符合条件的不止 limit 条，只返回了最新的 limit 条
+};
+
 // 完整性校验的结果。
 struct AuditCheck {
   bool ok = false;
@@ -62,7 +77,10 @@ class AuditService : public QObject {
   bool append(const QString& category, const QString& level, const QString& actor,
               const QString& source, const QString& deviceId, const QString& message);
 
-  // 最近的 limit 条，从新到旧；category 非空时只取这一类。
+  // 按条件检索，从新到旧。只读，不改动任何一行，所以检索和完整性校验互不影响。
+  AuditSearchResult search(const AuditFilter& filter) const;
+
+  // 最近的 limit 条，从新到旧；category 非空时只取这一类。是 search 的简写。
   QList<AuditEntry> recent(int limit, const QString& category = QString()) const;
 
   // 从第一行开始重算哈希链，并核对检查点文件。

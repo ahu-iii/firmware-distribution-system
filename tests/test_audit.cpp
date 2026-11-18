@@ -1,6 +1,7 @@
 // 审计日志哈希链（设计第 13 章，用例 ST-33）与相关的存储、配置。
 //   哈希链：正常追加后校验通过；改一行、删中间一行、删末尾、整体重算，都能被发现并定位；
 //           重启后接着原来的链往后写
+//   检索：  按分类、设备、时间段、关键字筛选，从新到旧，超过上限只给最新的；检索不影响校验
 //   权限：  只有审计员能查看和校验；管理操作和发布操作写进审计表
 //   数据库：早期版本的发布目标表（status 没有 held）打开时自动升级，数据保留
 #include <QFile>
@@ -128,6 +129,112 @@ TEST_F(Audit, ReloadContinuesChain) {
   EXPECT_TRUE(log->verify().ok);
 }
 
+// 一组固定的记录，用来测检索。时间由 SQL 改成固定值（只为检索测试，改完哈希链当然对不上）
+class AuditSearch : public Audit {
+ protected:
+  AuditSearch() {
+    add(audit::kAuth, QStringLiteral("maint"), QString(),
+        QStringLiteral("action=login target=maint result=ok"));
+    add(audit::kAdmin, QStringLiteral("op1"), QString(),
+        QStringLiteral("action=dispatch target=DEV-001 result=ok detail=pkg=6f1c"));
+    add(audit::kRollout, QStringLiteral("system"), QStringLiteral("DEV-001"),
+        QStringLiteral("发布 #3：设备 DEV-001 上报结果 ROLLED_BACK 3007"));
+    add(audit::kUpgrade, QStringLiteral("DEV-012"), QStringLiteral("DEV-012"),
+        QStringLiteral("result=SUCCESS version=1.2.0"));
+    add(audit::kSecurity, QStringLiteral("-"), QString(),
+        QStringLiteral("certificate rejected 50%_off"));
+    for (int id = 1; id <= 5; ++id) {
+      sql(QStringLiteral("UPDATE audit_log SET ts = '2026-11-18T09:0%1:00.000Z' WHERE id = %1")
+              .arg(id));
+    }
+  }
+  void add(const QString& category, const QString& actor, const QString& deviceId,
+           const QString& message) {
+    ASSERT_TRUE(log->append(category, QStringLiteral("INFO"), actor, QStringLiteral("host-1"),
+                            deviceId, message));
+  }
+  // 检索结果的序号，从新到旧
+  QList<qint64> ids(const AuditFilter& filter) {
+    QList<qint64> list;
+    for (const AuditEntry& e : log->search(filter).entries) list.append(e.id);
+    return list;
+  }
+};
+
+// 没有条件时全部返回，从新到旧；按分类筛选和原来一样
+TEST_F(AuditSearch, NoFilterAndCategory) {
+  EXPECT_EQ(ids(AuditFilter()), (QList<qint64>{5, 4, 3, 2, 1}));
+  AuditFilter filter;
+  filter.category = audit::kRollout;
+  EXPECT_EQ(ids(filter), (QList<qint64>{3}));
+}
+
+// 按设备：设备字段等于它的、对它的管理操作（target=它）都算；DEV-01 不会匹配到 DEV-012
+TEST_F(AuditSearch, DeviceMatchesFieldAndTargetWholeId) {
+  AuditFilter filter;
+  filter.deviceId = QStringLiteral("DEV-001");
+  EXPECT_EQ(ids(filter), (QList<qint64>{3, 2}));
+  filter.deviceId = QStringLiteral("DEV-012");
+  EXPECT_EQ(ids(filter), (QList<qint64>{4}));
+  filter.deviceId = QStringLiteral("DEV-01");
+  EXPECT_TRUE(ids(filter).isEmpty());
+}
+
+// 按时间段：两端都包含；界面传本机时间，这里换成 UTC 比较
+TEST_F(AuditSearch, TimeRangeInclusive) {
+  AuditFilter filter;
+  filter.from = QDateTime::fromString(QStringLiteral("2026-11-18T09:02:00.000Z"), Qt::ISODate);
+  filter.to = QDateTime::fromString(QStringLiteral("2026-11-18T09:04:00.000Z"), Qt::ISODate);
+  EXPECT_EQ(ids(filter), (QList<qint64>{4, 3, 2}));
+  filter.to = filter.from.toLocalTime();  // 同一时刻的本机时间
+  EXPECT_EQ(ids(filter), (QList<qint64>{2}));
+}
+
+// 按关键字：查内容、操作者、来源、设备，英文不区分大小写；% 和 _ 按字面意思查
+TEST_F(AuditSearch, KeywordIsLiteralAndCaseInsensitive) {
+  AuditFilter filter;
+  filter.keyword = QStringLiteral("rolled_back");
+  EXPECT_EQ(ids(filter), (QList<qint64>{3}));
+  filter.keyword = QStringLiteral("上报结果");
+  EXPECT_EQ(ids(filter), (QList<qint64>{3}));
+  filter.keyword = QStringLiteral("op1");  // 操作者
+  EXPECT_EQ(ids(filter), (QList<qint64>{2}));
+  filter.keyword = QStringLiteral("50%_");
+  EXPECT_EQ(ids(filter), (QList<qint64>{5}));
+  filter.keyword = QStringLiteral("0%_o");  // 如果 % 和 _ 被当成通配符，“50%_off”之外的记录也会混进来
+  EXPECT_EQ(ids(filter), (QList<qint64>{5}));
+  filter.keyword = QStringLiteral("_");  // 当成通配符的话会匹配所有记录；按字面只有带下划线的两条
+  EXPECT_EQ(ids(filter), (QList<qint64>{5, 3}));
+}
+
+// 几个条件同时生效；超过上限只给最新的，并标明被截断
+TEST_F(AuditSearch, CombinedAndLimit) {
+  AuditFilter filter;
+  filter.deviceId = QStringLiteral("DEV-001");
+  filter.keyword = QStringLiteral("dispatch");
+  EXPECT_EQ(ids(filter), (QList<qint64>{2}));
+
+  AuditFilter limited;
+  limited.limit = 2;
+  const AuditSearchResult result = log->search(limited);
+  EXPECT_EQ(result.entries.size(), 2);
+  EXPECT_EQ(result.entries.first().id, 5);
+  EXPECT_TRUE(result.truncated);
+  limited.limit = 5;
+  EXPECT_FALSE(log->search(limited).truncated);
+}
+
+// 检索只读：查过以后哈希链照样完整
+TEST_F(Audit, SearchDoesNotAffectVerify) {
+  appendSome(5);
+  AuditFilter filter;
+  filter.keyword = QStringLiteral("test3");
+  ASSERT_EQ(log->search(filter).entries.size(), 1);
+  const AuditCheck check = log->verify();
+  EXPECT_TRUE(check.ok) << check.detail.toStdString();
+  EXPECT_EQ(check.checkedRows, 5);
+}
+
 // 管理操作写进审计表（分类、操作者、来源主机）；只有审计员能查看和校验，校验本身也留痕
 TEST(AuditAccess, AdminOperationsAreRecordedAndOnlyAuditorReads) {
   ServerBackend backend;
@@ -141,15 +248,15 @@ TEST(AuditAccess, AdminOperationsAreRecordedAndOnlyAuditorReads) {
   EXPECT_TRUE(entry.message.startsWith(QStringLiteral("action=dispatch_on")));
   EXPECT_EQ(backend.audit.recent(10, audit::kAuth).first().message.left(12), QStringLiteral("action=login"));
 
-  QList<AuditEntry> entries;
+  AuditSearchResult found;
   AuditCheck check;
-  EXPECT_FALSE(backend.admin.recentAudit(10, QString(), &entries, &error));
+  EXPECT_FALSE(backend.admin.searchAudit(AuditFilter(), &found, &error));
   EXPECT_FALSE(backend.admin.verifyAudit(&check, &error));
   ASSERT_TRUE(backend.auth.createAccount(QStringLiteral("auditor"), Role::Auditor,
                                          pwd("Audit-pass-01"), false, &error));
   ASSERT_EQ(backend.admin.login(QStringLiteral("auditor"), pwd("Audit-pass-01"), &error), AuthResult::Ok);
-  ASSERT_TRUE(backend.admin.recentAudit(10, QString(), &entries, &error)) << error.toStdString();
-  EXPECT_FALSE(entries.isEmpty());
+  ASSERT_TRUE(backend.admin.searchAudit(AuditFilter(), &found, &error)) << error.toStdString();
+  EXPECT_FALSE(found.entries.isEmpty());
   ASSERT_TRUE(backend.admin.verifyAudit(&check, &error)) << error.toStdString();
   EXPECT_TRUE(check.ok) << check.detail.toStdString();
   EXPECT_TRUE(backend.audit.recent(1).first().message.startsWith(QStringLiteral("action=audit_verify")));
