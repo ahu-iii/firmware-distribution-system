@@ -8,6 +8,7 @@
 #include <QSqlError>
 #include <QSqlQuery>
 #include <QSysInfo>
+#include <QVariantList>
 
 #include "common/crypto/sha256.h"
 #include "common/log.h"
@@ -35,6 +36,14 @@ AuditEntry entryFromQuery(const QSqlQuery& query) {
   e.prevHash = query.value(8).toString();
   e.hash = query.value(9).toString();
   return e;
+}
+
+// LIKE 里 % 和 _ 是通配符：用户要查的文字里出现它们时，前面加 \ 当普通字符
+QString escapeLike(QString text) {
+  text.replace(QLatin1Char('\\'), QStringLiteral("\\\\"));
+  text.replace(QLatin1Char('%'), QStringLiteral("\\%"));
+  text.replace(QLatin1Char('_'), QStringLiteral("\\_"));
+  return text;
 }
 
 // 读检查点文件：一行“序号 hash”。文件不存在时返回 false。
@@ -131,23 +140,71 @@ bool AuditService::append(const QString& category, const QString& level, const Q
   return true;
 }
 
-QList<AuditEntry> AuditService::recent(int limit, const QString& category) const {
-  QList<AuditEntry> list;
-  QSqlQuery query(db_->handle());
-  if (category.isEmpty()) {
-    query.prepare(QString::fromLatin1(kSelectColumns) + QStringLiteral("ORDER BY id DESC LIMIT ?"));
-  } else {
-    query.prepare(QString::fromLatin1(kSelectColumns) +
-                  QStringLiteral("WHERE category = ? ORDER BY id DESC LIMIT ?"));
-    query.addBindValue(category);
+AuditSearchResult AuditService::search(const AuditFilter& filter) const {
+  // 每个非空条件拼一段 WHERE，值一律用 ? 绑定，不把用户输入的文字拼进 SQL
+  QStringList where;
+  QVariantList values;
+  if (!filter.category.isEmpty()) {
+    where << QStringLiteral("category = ?");
+    values << filter.category;
   }
-  query.addBindValue(limit);
+  if (!filter.deviceId.isEmpty()) {
+    // 设备上报、发布过程的记录 device_id 就是这台设备；
+    // 管理操作（如单台下发、改分组）的设备写在内容里：“action=dispatch target=DEV-001 result=ok”。
+    // 前后都带空格整段匹配，DEV-01 不会匹配到 DEV-012
+    where << QStringLiteral("(device_id = ? OR message LIKE ? ESCAPE '\\')");
+    values << filter.deviceId
+           << QStringLiteral("% target=") + escapeLike(filter.deviceId) + QStringLiteral(" %");
+  }
+  if (filter.from.isValid()) {
+    // ts 存的是 UTC 的 ISO 8601 文字（定长，到毫秒），按文字比较就是按时间比较
+    where << QStringLiteral("ts >= ?");
+    values << filter.from.toUTC().toString(Qt::ISODateWithMs);
+  }
+  if (filter.to.isValid()) {
+    where << QStringLiteral("ts <= ?");
+    values << filter.to.toUTC().toString(Qt::ISODateWithMs);
+  }
+  if (!filter.keyword.isEmpty()) {
+    // SQLite 的 LIKE 对英文字母不区分大小写；%、_ 先转义，按字面意思查
+    where << QStringLiteral(
+        "(message LIKE ? ESCAPE '\\' OR actor LIKE ? ESCAPE '\\' OR source LIKE ? ESCAPE '\\'"
+        " OR device_id LIKE ? ESCAPE '\\')");
+    const QString pattern = QLatin1Char('%') + escapeLike(filter.keyword) + QLatin1Char('%');
+    values << pattern << pattern << pattern << pattern;
+  }
+
+  QString sql = QString::fromLatin1(kSelectColumns);
+  if (!where.isEmpty()) {
+    sql += QStringLiteral("WHERE ") + where.join(QStringLiteral(" AND ")) + QLatin1Char(' ');
+  }
+  // 多取一条：取到了就说明符合条件的超过 limit 条
+  sql += QStringLiteral("ORDER BY id DESC LIMIT ?");
+  values << filter.limit + 1;
+
+  AuditSearchResult result;
+  QSqlQuery query(db_->handle());
+  query.prepare(sql);
+  for (const QVariant& v : values) query.addBindValue(v);
   if (!query.exec()) {
     qCWarning(lcAudit) << "audit_log query failed:" << query.lastError().text();
-    return list;
+    return result;
   }
-  while (query.next()) list.append(entryFromQuery(query));
-  return list;
+  while (query.next()) {
+    if (result.entries.size() == filter.limit) {
+      result.truncated = true;
+      break;
+    }
+    result.entries.append(entryFromQuery(query));
+  }
+  return result;
+}
+
+QList<AuditEntry> AuditService::recent(int limit, const QString& category) const {
+  AuditFilter filter;
+  filter.category = category;
+  filter.limit = limit;
+  return search(filter).entries;
 }
 
 AuditCheck AuditService::verify() const {

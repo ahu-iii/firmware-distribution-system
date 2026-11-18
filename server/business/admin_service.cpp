@@ -386,7 +386,7 @@ bool AdminService::emergencyStop(qint64 releaseId, QString* error) {
 
 // ---------- 审计日志 ----------
 
-bool AdminService::recentAudit(int limit, const QString& category, QList<AuditEntry>* entries,
+bool AdminService::searchAudit(const AuditFilter& filter, AuditSearchResult* result,
                                QString* error) {
   // 查看成功不写审计日志（审计员每次刷新都会调用，记下来只会淹没真正的操作）；被拒照样记录
   if (!authorize(Permission::ViewAudit, "audit_view", QString(), error)) return false;
@@ -394,7 +394,7 @@ bool AdminService::recentAudit(int limit, const QString& category, QList<AuditEn
     *error = QStringLiteral("审计日志不可用");
     return false;
   }
-  *entries = audit_->recent(limit, category);
+  *result = audit_->search(filter);
   return true;
 }
 
