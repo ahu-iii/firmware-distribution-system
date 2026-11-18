@@ -125,6 +125,9 @@ struct LiveDevice {
     QObject::connect(updater.get(), &Updater::rebootFinished, client.get(), [this]() { client->start(); });
     QObject::connect(updater.get(), &Updater::alertRaised,
                      [this](int code, const QString&) { alerts.append(code); });
+    QObject::connect(client.get(), &TcpClient::frameReceived, [this](const Frame& frame) {
+      if (static_cast<MsgType>(frame.type) == MsgType::UpdateNotify) ++notifies;
+    });
     QObject::connect(updater.get(), &Updater::finished,
                      [this](const QString& result, int code, const QString& detail) {
                        Q_UNUSED(code);
@@ -159,6 +162,7 @@ struct LiveDevice {
   std::unique_ptr<EventReporter> reporter;
   QList<int> alerts;
   QStringList results;
+  int notifies = 0;  // 收到过几次 UPDATE_NOTIFY
 };
 
 }  // namespace fwds_test
