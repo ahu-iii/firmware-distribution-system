@@ -65,8 +65,11 @@ bool TlsChannelSecurity::load(const QByteArray& caPem, const QByteArray& crlPem,
                  .arg(backend.isEmpty() ? QStringLiteral("无") : backend);
     return false;
   }
-  if (QSslSocket::sslLibraryVersionNumber() < 0x30000000L) {
-    *error = QStringLiteral("Qt 加载的 OpenSSL 版本过低：%1，需要 3.x")
+  // Qt 的 TLS 后端和本程序自己（证书校验、签名验签）必须用同一个大版本的 OpenSSL 3：
+  // 一个进程里混着两版 libcrypto 时，两边的对象不能互相传递
+  const long qtSsl = QSslSocket::sslLibraryVersionNumber();
+  if (qtSsl < 0x30000000L || qtSsl >= 0x40000000L || !opensslRuntimeIs3()) {
+    *error = QStringLiteral("OpenSSL 版本不对：Qt 加载的是 %1，需要 Qt 和本程序都用 3.x")
                  .arg(QSslSocket::sslLibraryVersionString());
     return false;
   }
