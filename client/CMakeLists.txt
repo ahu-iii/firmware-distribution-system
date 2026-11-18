@@ -23,6 +23,10 @@ add_library(fwds_client_lib STATIC
   business/updater.cpp
   business/provisioner.h
   business/provisioner.cpp
+  business/event_outbox.h
+  business/event_outbox.cpp
+  business/event_reporter.h
+  business/event_reporter.cpp
 )
 target_link_libraries(fwds_client_lib PUBLIC fwds_common)
 

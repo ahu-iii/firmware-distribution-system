@@ -122,6 +122,9 @@ int main(int argc, char* argv[]) {
   qCWarning(fwds::lcApp) << "license check is not available in this build, LOGIN skips it";
   fwds::LoginHandler loginHandler(config.protocol, &registry, &loginThrottle, licenseVerifier);
   fwds::HeartbeatMonitor heartbeatMonitor(&server, &registry);
+  // 事件入库与对账：设备上报的进度、结果、告警按 (设备, 序号) 去重入库，登录时按 event_base 对账
+  fwds::EventStore eventStore(&database, &registry, &server);
+  loginHandler.setEventStore(&eventStore);
   // 固件库：启动时把库里的每个包重新检查一遍（验签、逐片哈希、整镜像哈希）
   fwds::FirmwareRepo firmwareRepo(&database, fskVerifier, config.firmwareDir);
   if (!firmwareRepo.load(&error)) {
@@ -151,6 +154,7 @@ int main(int argc, char* argv[]) {
   if (!headless) {
     window = std::make_unique<fwds::MainWindow>(&server, &registry, &admin, &dispatchGate,
                                                 &firmwareRepo, &rollout);
+    window->setEventStore(&eventStore);
     window->show();
     QTimer::singleShot(0, window.get(), &fwds::MainWindow::promptLogin);
   }

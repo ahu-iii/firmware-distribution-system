@@ -7,9 +7,12 @@
 #include <QCommandLineParser>
 #include <QCoreApplication>
 #include <QDateTime>
+#include <QDir>
 #include <QElapsedTimer>
 #include <memory>
 
+#include "client/business/event_outbox.h"
+#include "client/business/event_reporter.h"
 #include "client/business/provisioner.h"
 #include "client/business/updater.h"
 #include "client/net/tcp_client.h"
@@ -123,19 +126,42 @@ int main(int argc, char* argv[]) {
   QObject::connect(&updater, &fwds::Updater::rebootRequested, &client,
                    [&client]() { client.stop(QStringLiteral("reboot")); });
   QObject::connect(&updater, &fwds::Updater::rebootFinished, &client, [&client]() { client.start(); });
-  // 升级结果和安全告警目前写本地日志并显示在界面上；作为事件落盘、上报（RESULT / ALERT）
-  // 由 EventOutbox 在“事件补传对账”那一步接入
   QObject::connect(&updater, &fwds::Updater::finished, &updater,
                    [](const QString& result, int code, const QString& detail) {
                      qCInfo(fwds::lcApp).noquote() << "update result:" << result << code << detail;
                    });
 
+  // 事件闭环（设计 4.6 节）：升级的进度、结果、告警先写进 outbox 并刷盘，再发给服务端；
+  // 服务端在 LOGIN_RESULT 和 HEARTBEAT_ACK 里确认到哪个序号，outbox 就删到哪个序号；
+  // 断线期间只落盘不发送，重新登录后按序号补传
+  fwds::EventOutbox outbox(QDir(config.dataDir).filePath(QStringLiteral("outbox")),
+                           [&client](fwds::MsgType type, const QByteArray& body) {
+                             return client.send(type, body);
+                           });
+  if (!outbox.open(&error)) {
+    qCCritical(fwds::lcApp).noquote() << error;
+    return 6;
+  }
+  fwds::EventReporter reporter(&updater, &outbox);
+  QObject::connect(&client, &fwds::TcpClient::loggedIn, &outbox, [&outbox](const QJsonObject& result) {
+    outbox.onLoggedIn(result.value(QStringLiteral("event_ack")).toInteger());
+  });
+  QObject::connect(&client, &fwds::TcpClient::heartbeatAcked, &outbox, [&outbox](const QJsonObject& ack) {
+    outbox.onAcked(ack.value(QStringLiteral("event_ack")).toInteger(-1));
+  });
+  QObject::connect(&client, &fwds::TcpClient::stateChanged, &outbox,
+                   [&outbox](fwds::TcpClient::State state) {
+                     if (state != fwds::TcpClient::State::Online) outbox.onDisconnected();
+                   });
+
   // LOGIN 带上当前运行的固件版本、安全版本号和活动分区；HEARTBEAT 带上升级状态和进度
-  client.setLoginProvider([&config, &updater]() {
+  // LOGIN 还带上 event_base：本地已确认并删除的最大事件序号，服务端拿它和自己的记录对账
+  client.setLoginProvider([&config, &updater, &outbox]() {
     QJsonObject login = updater.loginFields();
     login.insert(QStringLiteral("device_id"), config.deviceId);
     login.insert(QStringLiteral("model"), config.model);
     login.insert(QStringLiteral("ts"), QDateTime::currentMSecsSinceEpoch());
+    login.insert(QStringLiteral("event_base"), outbox.confirmedSeq());
     return login;
   });
   client.setHeartbeatProvider([&uptime, &updater]() {
@@ -148,7 +174,7 @@ int main(int argc, char* argv[]) {
 
   std::unique_ptr<fwds::MainWindow> window;
   if (!headless) {
-    window = std::make_unique<fwds::MainWindow>(config, &client, &updater);
+    window = std::make_unique<fwds::MainWindow>(config, &client, &updater, &outbox);
     window->show();
   }
   QObject::connect(app.get(), &QCoreApplication::aboutToQuit, &client, [&client]() { client.stop(); });

@@ -78,6 +78,8 @@ void Downloader::onUpdateNotify(const QByteArray& body) {
   // ③ 先验签，后解析，再查型号和防降级。任何一项不过都不下载
   stopTimers();
   awaitingNotify_ = false;
+  notifiedPkgId_ = notify.pkgId;  // 只用于事件上报，说明是哪个通知；包的内容以验签后的 manifest 为准
+  releaseId_ = notify.releaseId;
   Manifest manifest;
   QString detail;
   const ErrorCode verdict =
