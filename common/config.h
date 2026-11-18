@@ -78,6 +78,8 @@ struct ClientConfig {
   // 启动时两者对不上就不运行，防止装错公钥（设计 11.3 节）。
   QString fskPubFile;
   QString fskPubSha256;
+  // 设备许可证 device.lic（设计第 15 节）：启动时核对签名、设备 ID、本机硬件指纹和有效期，LOGIN 时发给服务端
+  QString licenseFile;
   // 模拟重启要“黑屏”多久（毫秒）。只影响演示时 REBOOTING 状态停留的时间。
   int rebootDelayMs = 2000;
   QString logLevel = QStringLiteral("INFO");

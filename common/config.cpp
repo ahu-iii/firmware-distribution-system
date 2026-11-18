@@ -199,6 +199,7 @@ bool loadClientConfig(const QString& path, ClientConfig* out, QString* error) {
       !readRequiredString(s, QStringLiteral("client/data_dir"), &cfg.dataDir, error) ||
       !readRequiredString(s, QStringLiteral("client/fsk_pub_file"), &cfg.fskPubFile, error) ||
       !readFingerprint(s, QStringLiteral("client/fsk_pub_sha256"), &cfg.fskPubSha256, error) ||
+      !readRequiredString(s, QStringLiteral("client/license_file"), &cfg.licenseFile, error) ||
       !readInt(s, QStringLiteral("client/reboot_delay_ms"), 0, 60000, &cfg.rebootDelayMs, error)) {
     return false;
   }

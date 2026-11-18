@@ -29,6 +29,7 @@ add_executable(fwds-tests
   test_device_login.cpp
   test_fsk.h
   test_rsa_pss.cpp
+  test_software_protection.cpp
   test_manifest.cpp
   test_manifest_verifier.cpp
   test_firmware_package.cpp

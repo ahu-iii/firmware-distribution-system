@@ -48,6 +48,22 @@ add_library(fwds_common STATIC
   security/key_store.cpp
   security/tls_channel.h
   security/tls_channel.cpp
+  security/license.h
+  security/license.cpp
+  security/exe_signature.h
+  security/exe_signature.cpp
+  obfuscated_string.h
+  shutdown_signal.h
+  shutdown_signal.cpp
 )
 target_include_directories(fwds_common PUBLIC ${CMAKE_SOURCE_DIR})
 target_link_libraries(fwds_common PUBLIC Qt6::Core Qt6::Network OpenSSL::Crypto)
+
+if(FWDS_REQUIRE_EXE_SIGNATURE)
+  set(FWDS_REQUIRE_EXE_SIGNATURE_BOOL true)
+else()
+  set(FWDS_REQUIRE_EXE_SIGNATURE_BOOL false)
+endif()
+# 版本号和发布版开关写进生成的头文件 build_info.h，三个程序和“关于”信息都从这里取
+configure_file(build_info.h.in ${CMAKE_BINARY_DIR}/generated/common/build_info.h @ONLY)
+target_include_directories(fwds_common PUBLIC ${CMAKE_BINARY_DIR}/generated)

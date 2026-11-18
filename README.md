@@ -20,11 +20,11 @@
 | 目录 | 内容 | 现状 |
 |---|---|---|
 | `common/` | 协议常量、FrameCodec、配置加载、日志、网络层公共部分（FrameChannel、重连退避、信道安全接口）；固件 manifest、.fwpkg 容器和模拟固件镜像头；升级消息体编解码（UPDATE_NOTIFY、CHUNK_REQ、CHUNK_DATA）；`crypto/`（SecureBuffer、AES-256-GCM、PBKDF2、私钥文件封装、X.509 读取、SHA-256、RSA-3072-PSS 签名验签）；`security/`（TLS 配置、证书完整校验、私钥口令注入、ManifestVerifier：manifest 验签、分片哈希、整镜像校验；固件签名公钥指纹核对，两端共用） | 已实现 |
-| `server/` | 分发服务端 `fwds-server`：`net/`（TcpServer、Session、ConnLimiter）、`storage/`（SQLite）、`security/`（OperatorAuth：账号口令与角色权限）、`business/`（DeviceRegistry、LoginHandler、LoginThrottle、HeartbeatMonitor、AdminService、DispatchGate、FirmwareRepo、RolloutManager、ChunkService）、`ui/`（登录、设备监控、固件库、账号管理） | 网络层、TLS、设备注册表与指纹比对、登录失败锁定、账号与角色、“允许下发”开关、设备监控界面、固件库（导入时和启动时整包检查、固件表入库、导入界面）、单台下发（开关、型号、互锁裁决，发布表留痕）、分片服务（下发通知、按请求发分片、重连后重发通知）已实现；许可证验签（接入点已留）、按分组灰度与紧急停止、设备事件入库、审计哈希链待实现 |
-| `client/` | 设备客户端 `fwds-client`：`net/`（TcpClient：登录、心跳、断线重连）、`security/`（UpdateValidator：下载前验签、型号、防降级三项检查；DeviceAntiRollback）、`business/`（Updater：升级状态机；Downloader：分片下载；Bootloader：启动验签、自检、回滚；Provisioner：出厂写入）、`storage/`（ResumeStore、ChunkBitmap：断点落盘；BootConfig、SlotStore：boot.json 和 A/B 分区）、`ui/` | 网络层、TLS、下载前检查、防降级、分片下载与断点续传、整包校验、A/B 分区写入、模拟重启与自动回滚已实现并接入主程序；界面显示当前固件、分区、升级状态和进度；事件 outbox（PROGRESS / RESULT / ALERT 落盘上报）、许可证、演示面板待实现 |
-| `signer/` | 离线签发工具 `fwds-signer` | 证书子命令（`ca-init`、`issue-cert`、`revoke`、`update-crl`、`list-certs`）和固件子命令（`fsk-init`、`make-image`、`sign-fw`、`verify-fw`）已实现；程序签名、许可证待实现 |
-| `tests/` | GoogleTest 单元测试；`attack_tools/` 是安全测试用的 Python 小工具（测试代理、连接洪泛、抓包明文搜索） | 335 条，覆盖帧编解码、配置、连接限制、加密基础件、证书校验、签发工具、TLS 双向认证、网络层（全部走真实 TLS）、账号口令与锁定、角色权限、设备注册表、设备登录（2005 / 2006 / 2007）、RSA-PSS 签名验签、manifest 解析、先验签后解析、分片与整镜像校验、.fwpkg 容器与篡改检测、升级消息体编解码、断点位图与落盘、分片下载（单片重试、窗口超时、取消、3004）、断点续传联调（断线、设备重启、服务端重启、缓存被改、固件更换）、防降级边界、boot.json 与分区写入顺序、Bootloader 决策（转正、回滚、另一分区、恢复模式）、升级状态机全流程（成功切换分区、自检失败回滚、降级被拒、写入前篡改、各阶段取消、重启途中断电）、出厂写入、服务端固件库（导入、拒绝篡改和伪造的包、重启后重新检查）、单台下发联调（正常升级、自检失败回滚、降级被拒、开关与角色、离线不下发、互锁、服务端重启后暂停） |
-| `deploy/config/` | `dev.ini`、`test.ini`、`prod.ini` 配置模板 | 已提供 |
+| `server/` | 分发服务端 `fwds-server`：`net/`（TcpServer、Session、ConnLimiter）、`storage/`（SQLite）、`security/`（OperatorAuth：账号口令与角色权限）、`business/`（DeviceRegistry、LoginHandler、LoginThrottle、HeartbeatMonitor、AdminService、DispatchGate、FirmwareRepo、RolloutManager、ChunkService）、`ui/`（登录、设备监控、固件库、账号管理） | 网络层、TLS、设备注册表与指纹比对、登录失败锁定、账号与角色、“允许下发”开关、设备监控界面、固件库（导入时和启动时整包检查、固件表入库、导入界面）、单台下发（开关、型号、互锁裁决，发布表留痕）、分片服务（下发通知、按请求发分片、重连后重发通知）、按分组灰度与紧急停止、设备事件入库与对账、审计哈希链、登录时的许可证验签、启动时的程序自校验和 `--check` 部署自检已实现 |
+| `client/` | 设备客户端 `fwds-client`：`net/`（TcpClient：登录、心跳、断线重连）、`security/`（UpdateValidator：下载前验签、型号、防降级三项检查；DeviceAntiRollback）、`business/`（Updater：升级状态机；Downloader：分片下载；Bootloader：启动验签、自检、回滚；Provisioner：出厂写入）、`storage/`（ResumeStore、ChunkBitmap：断点落盘；BootConfig、SlotStore：boot.json 和 A/B 分区）、`ui/` | 网络层、TLS、下载前检查、防降级、分片下载与断点续传、整包校验、A/B 分区写入、模拟重启与自动回滚已实现并接入主程序；界面显示当前固件、分区、升级状态和进度；事件 outbox（PROGRESS / RESULT / ALERT 落盘上报）、启动时的许可证检查（签名、设备 ID、硬件指纹、有效期）和程序自校验已实现；演示面板待实现 |
+| `signer/` | 离线签发工具 `fwds-signer` | 证书子命令（`ca-init`、`issue-cert`、`revoke`、`update-crl`、`list-certs`）、固件子命令（`fsk-init`、`make-image`、`sign-fw`、`verify-fw`）、程序签名 `sign-exe`、许可证 `issue-lic` 已实现 |
+| `tests/` | GoogleTest 单元测试；`attack_tools/` 是安全测试用的 Python 小工具（测试代理、连接洪泛、抓包明文搜索） | 345 条，覆盖帧编解码、配置、连接限制、加密基础件、证书校验、签发工具、TLS 双向认证、网络层（全部走真实 TLS）、账号口令与锁定、角色权限、设备注册表、设备登录（2005 / 2006 / 2007）、RSA-PSS 签名验签、manifest 解析、先验签后解析、分片与整镜像校验、.fwpkg 容器与篡改检测、升级消息体编解码、断点位图与落盘、分片下载（单片重试、窗口超时、取消、3004）、断点续传联调（断线、设备重启、服务端重启、缓存被改、固件更换）、防降级边界、boot.json 与分区写入顺序、Bootloader 决策（转正、回滚、另一分区、恢复模式）、升级状态机全流程（成功切换分区、自检失败回滚、降级被拒、写入前篡改、各阶段取消、重启途中断电）、出厂写入、服务端固件库（导入、拒绝篡改和伪造的包、重启后重新检查）、单台下发联调（正常升级、自检失败回滚、降级被拒、开关与角色、离线不下发、互锁、服务端重启后暂停）、软件保护（字符串加密、许可证签名与硬件指纹、程序被改 1 字节即被发现）、数据库结构版本 |
+| `deploy/` | 打包（去符号表、UPX、程序签名）、安装（开机自启与进程守护：systemd / launchd / 任务计划程序）、升级、回滚脚本，`.sh` 用于 Linux / macOS、`.ps1` 用于 Windows；`config/` 下是 `dev.ini`、`test.ini`、`prod.ini` 配置模板。用法见 [deploy/README.md](deploy/README.md) | Linux 版在云端演练通过；自启守护和 Windows 脚本待真机验证 |
 
 ## 构建与运行
 
@@ -112,18 +112,7 @@ ctest --preset dev
 - 用 MinGW 也可以：Qt 选 MinGW 套件，OpenSSL 用 MSYS2 的 `mingw-w64-x86_64-openssl`，在 Qt 自带的 MinGW 命令行里构建。这条路没有验证过。
 - 两台机器联调时，服务端 `listen_address` 改成本机局域网地址，Windows 防火墙弹窗时允许专用网络。
 
-打包成可以拷到干净机器上运行的目录（演示机不用装 Qt）：
-
-```powershell
-cmake --preset release -G Ninja -DCMAKE_PREFIX_PATH="$Qt" -DOPENSSL_ROOT_DIR="$Ssl" -DFWDS_BUILD_TESTS=OFF
-cmake --build --preset release
-New-Item -ItemType Directory dist -Force
-Copy-Item build\release\bin\fwds-*.exe dist\
-Copy-Item "$Ssl\bin\libssl-3-x64.dll", "$Ssl\bin\libcrypto-3-x64.dll" dist\
-& "$Qt\bin\windeployqt.exe" --release --compiler-runtime dist\fwds-server.exe dist\fwds-client.exe
-```
-
-windeployqt 会把 Qt 的 DLL、平台插件、SQLite 驱动、TLS 后端插件和 VC++ 运行库安装包放进 `dist\`，但不带 OpenSSL 的 DLL，所以上面单独复制了两个。`fwds-signer.exe` 只在签发主机上用，不需要随设备分发。配置模板从 `deploy\config\` 复制，证书和私钥另外拷贝，不放进 `dist\` 的版本库或安装包。UPX 压缩和程序签名在这个目录上做（待实现）。
+打包成可以拷到干净机器上运行的安装包（演示机不用装 Qt），以及安装、升级、回滚，见 [deploy/README.md](deploy/README.md)。
 
 ### 本机联调
 
@@ -145,6 +134,12 @@ build/dev/bin/fwds-signer issue-cert --ca-dir local/ca --type device --name DEV-
 build/dev/bin/fwds-signer fsk-init --fsk-dir local/fsk
 cp deploy/config/dev.ini local/dev.local.ini      # 然后把两处 fsk_pub_sha256=<FSK 公钥指纹> 改成显示的指纹
 
+# 3b. 给设备签发许可证（设计第 15 节）：绑定设备 ID 和本机硬件指纹，拷到别的机器上设备就不运行。
+#     提示输入 FSK 口令；dev 模板的 license_file 指向 local/lic/DEV-001.lic
+mkdir -p local/lic
+build/dev/bin/fwds-signer issue-lic --fsk-dir local/fsk --device-id DEV-001 \
+    --hw-fingerprint "$(build/dev/bin/fwds-client --hw-fingerprint)" --out local/lic/DEV-001.lic
+
 # 4. 两个终端分别启动。私钥口令通过环境变量注入，程序读取后立即从环境中清除
 #    （read -s 不回显、不进命令历史；加 --headless 则不显示界面）
 read -s FWDS_KEY_PASSPHRASE && export FWDS_KEY_PASSPHRASE
@@ -165,7 +160,9 @@ build/dev/bin/fwds-client --config local/dev.local.ini
 
 数据库文件的位置在配置 `[server] db_file`（dev 模板为 `local/data/fwds-server.db`），固件库目录在 `[server] firmware_dir`（dev 模板为 `local/data/firmware`）。加 `--headless` 运行时没有账号登录，只做监控，不能执行管理操作。
 
-多开设备：再签一张 `DEV-002` 的证书，复制一份配置（命名为 `*.local.ini`），改 `device_id` 和 `[client]` 的 `cert_file`、`key_file`、`data_dir`（每台设备一个数据目录）。
+多开设备：再签一张 `DEV-002` 的证书和一份 `DEV-002` 的许可证，复制一份配置（命名为 `*.local.ini`），改 `device_id` 和 `[client]` 的 `cert_file`、`key_file`、`license_file`、`data_dir`（每台设备一个数据目录）。
+
+开发版（`dev` 预设）没有程序签名文件时只在启动日志里警告；Release 版缺签名文件就拒绝运行，要先用 `deploy/package.sh` / `package.ps1` 打包（见 [deploy/README.md](deploy/README.md)）。
 
 吊销演练：`fwds-signer revoke --ca-dir local/ca --name DEV-001`，然后用新的 `local/ca/crl.pem` 覆盖配置里 `crl_file` 指向的文件；服务端在下一次握手前自动重新加载，该设备重连即被拒绝。CRL 默认 30 天有效，到期前用 `fwds-signer update-crl` 刷新。
 

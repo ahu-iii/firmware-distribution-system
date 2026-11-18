@@ -1,14 +1,18 @@
 // fwds-client：设备客户端入口。多开时每个实例用自己的配置文件模拟一台设备。
 // 用法：fwds-client --config <配置文件> [--headless]
 //       fwds-client --config <配置文件> --provision <固件包.fwpkg>   出厂写入第一份固件后退出
+//       fwds-client --config <配置文件> --check     部署自检：检查各项材料后退出
+//       fwds-client --hw-fingerprint                显示本机硬件指纹（签发许可证用）后退出
 // 启动前须设置环境变量 FWDS_KEY_PASSPHRASE（设备私钥口令），程序读取后立即清除。
-// 启动顺序：读配置 → 装入固件签名公钥（核对指纹）→ 建立 TLS 材料 → Bootloader 选分区 → 连接服务端。
+// 启动顺序：读配置 → 装入固件签名公钥（核对指纹）→ 程序自校验 → 许可证 → 建立 TLS 材料
+//           → Bootloader 选分区 → 连接服务端。
 #include <QApplication>
 #include <QCommandLineParser>
 #include <QCoreApplication>
 #include <QDateTime>
 #include <QDir>
 #include <QElapsedTimer>
+#include <QTextStream>
 #include <memory>
 
 #include "client/business/event_outbox.h"
@@ -18,8 +22,12 @@
 #include "client/net/tcp_client.h"
 #include "common/security/fsk_public_key.h"
 #include "client/ui/main_window.h"
+#include "common/build_info.h"
 #include "common/config.h"
 #include "common/log.h"
+#include "common/shutdown_signal.h"
+#include "common/security/exe_signature.h"
+#include "common/security/license.h"
 #include "common/security/key_store.h"
 #include "common/security/tls_channel.h"
 
@@ -48,15 +56,20 @@ static std::unique_ptr<fwds::TlsChannelSecurity> makeChannelSecurity(
 }
 
 int main(int argc, char* argv[]) {
+  // 出厂写入、自检、显示硬件指纹、--version、--help 都不需要界面
   bool headless = false;
   for (int i = 1; i < argc; ++i) {
-    if (qstrcmp(argv[i], "--headless") == 0) headless = true;
+    if (qstrcmp(argv[i], "--headless") == 0 || qstrcmp(argv[i], "--check") == 0 ||
+        qstrcmp(argv[i], "--version") == 0 || qstrcmp(argv[i], "--help") == 0 ||
+        qstrcmp(argv[i], "--provision") == 0 || qstrcmp(argv[i], "--hw-fingerprint") == 0) {
+      headless = true;
+    }
   }
   std::unique_ptr<QCoreApplication> app;
   if (headless) app = std::make_unique<QCoreApplication>(argc, argv);
   else app = std::make_unique<QApplication>(argc, argv);
   QCoreApplication::setApplicationName(QStringLiteral("fwds-client"));
-  QCoreApplication::setApplicationVersion(QStringLiteral("0.1.0"));
+  QCoreApplication::setApplicationVersion(QString::fromLatin1(fwds::kAppVersion));
 
   QCommandLineParser parser;
   parser.setApplicationDescription(QStringLiteral("工业固件安全升级分发系统 - 设备客户端"));
@@ -68,10 +81,28 @@ int main(int argc, char* argv[]) {
   const QCommandLineOption provisionOpt(
       QStringLiteral("provision"),
       QStringLiteral("出厂写入：把这个 .fwpkg 装进空设备的分区 a，然后退出"), QStringLiteral("fwpkg"));
+  const QCommandLineOption checkOpt(
+      QStringLiteral("check"),
+      QStringLiteral("部署自检：检查配置、公钥、程序签名、许可证、证书和私钥后退出"));
+  const QCommandLineOption hwOpt(QStringLiteral("hw-fingerprint"),
+                                 QStringLiteral("显示本机硬件指纹（签发许可证时要填）后退出"));
   parser.addOption(configOpt);
   parser.addOption(headlessOpt);
   parser.addOption(provisionOpt);
+  parser.addOption(checkOpt);
+  parser.addOption(hwOpt);
   parser.process(*app);
+
+  // 硬件指纹不是秘密：只是本机标识的哈希，交给签发主机写进许可证
+  if (parser.isSet(hwOpt)) {
+    const QString hw = fwds::localHardwareFingerprint();
+    if (hw.isEmpty()) {
+      QTextStream(stderr) << "取不到本机的硬件标识\n";
+      return 1;
+    }
+    QTextStream(stdout) << hw << "\n";
+    return 0;
+  }
 
   fwds::initLogging(QStringLiteral("INFO"));
   fwds::ClientConfig config;
@@ -81,6 +112,7 @@ int main(int argc, char* argv[]) {
     return 2;
   }
   fwds::initLogging(config.logLevel);
+  qCInfo(fwds::lcApp).noquote() << "fwds-client" << fwds::kAppVersion << "device" << config.deviceId;
 
   // 固件签名公钥：设备只装这把公钥对应的私钥签过的固件。指纹对不上就不运行
   fwds::ManifestVerifier fskVerifier;
@@ -89,6 +121,11 @@ int main(int argc, char* argv[]) {
     return 4;
   }
 
+  // 程序自校验（设计第 15 节）：程序文件被改过就不运行
+  if (!fwds::selfCheckExecutable(fskVerifier, &error)) {
+    qCCritical(fwds::lcSecurity).noquote() << error;
+    return 7;
+  }
   // 出厂写入模式：不联网，装好第一份固件就退出
   if (parser.isSet(provisionOpt)) {
     if (!fwds::provisionDevice(config.dataDir, parser.value(provisionOpt), fskVerifier, config.model,
@@ -100,6 +137,14 @@ int main(int argc, char* argv[]) {
     return 0;
   }
 
+  // 许可证：签名、设备 ID、本机硬件指纹、有效期都要对上，拷到别的机器上就不运行
+  QByteArray licenseBytes;
+  if (!fwds::loadDeviceLicense(config.licenseFile, fskVerifier, config.deviceId, &licenseBytes,
+                               &error)) {
+    qCCritical(fwds::lcSecurity).noquote() << error;
+    return 8;
+  }
+
   const std::unique_ptr<fwds::TlsChannelSecurity> security = makeChannelSecurity(config, &error);
   if (!security) {
     qCCritical(fwds::lcApp).noquote() << "TLS setup failed:" << error;
@@ -107,6 +152,11 @@ int main(int argc, char* argv[]) {
   }
   if (QDateTime::currentDateTimeUtc().daysTo(security->localCertNotAfter()) < 15) {
     qCWarning(fwds::lcSecurity) << "device certificate expires within 15 days, issue a new one";
+  }
+  if (parser.isSet(checkOpt)) {
+    QTextStream(stdout) << "version=" << fwds::kAppVersion << "\ndevice_id=" << config.deviceId
+                        << "\ncheck=ok\n";
+    return 0;
   }
 
   fwds::TcpClient client(config, security.get());
@@ -156,12 +206,14 @@ int main(int argc, char* argv[]) {
 
   // LOGIN 带上当前运行的固件版本、安全版本号和活动分区；HEARTBEAT 带上升级状态和进度
   // LOGIN 还带上 event_base：本地已确认并删除的最大事件序号，服务端拿它和自己的记录对账
-  client.setLoginProvider([&config, &updater, &outbox]() {
+  // LOGIN 还带上许可证（服务端再验一遍签名、设备 ID 和有效期，不过返回 2006）
+  client.setLoginProvider([&config, &updater, &outbox, licenseBytes]() {
     QJsonObject login = updater.loginFields();
     login.insert(QStringLiteral("device_id"), config.deviceId);
     login.insert(QStringLiteral("model"), config.model);
     login.insert(QStringLiteral("ts"), QDateTime::currentMSecsSinceEpoch());
     login.insert(QStringLiteral("event_base"), outbox.confirmedSeq());
+    login.insert(QStringLiteral("license"), QString::fromLatin1(licenseBytes.toBase64()));
     return login;
   });
   client.setHeartbeatProvider([&uptime, &updater]() {
@@ -185,5 +237,6 @@ int main(int argc, char* argv[]) {
     qCCritical(fwds::lcApp) << "no bootable firmware, recovery mode: waiting for the server to push one";
   }
   client.start();
+  fwds::quitOnTerminationSignal(app.get());
   return app->exec();
 }
