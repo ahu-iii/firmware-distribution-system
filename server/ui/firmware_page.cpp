@@ -17,6 +17,8 @@
 #include <QTextEdit>
 #include <QVBoxLayout>
 
+#include "server/ui/login_dialog.h"
+
 namespace fwds {
 
 namespace {
@@ -44,18 +46,14 @@ QTableWidget* makeTable(const QStringList& headers, QWidget* parent) {
   return table;
 }
 
-// 发布状态和设备状态的中文说明（库里存的是英文关键字）。
+// 下发记录的状态一列：设备的状态，加上说明（失败原因、待确认的原因等）。
 QString dispatchStateText(const DispatchRecord& r) {
-  if (r.targetStatus == QLatin1String("failed")) {
-    return QStringLiteral("未发出（%1）").arg(r.lastError);
+  QString text = targetStatusText(r.targetStatus);
+  if (r.releaseState == QLatin1String("paused") || r.releaseState == QLatin1String("aborted")) {
+    text += QStringLiteral("（发布%1）").arg(releaseStateText(r.releaseState));
   }
-  if (r.releaseState == QLatin1String("paused")) {
-    return QStringLiteral("已暂停（服务端重启，需重新下发）");
-  }
-  if (r.targetStatus == QLatin1String("notified")) {
-    return QStringLiteral("已通知设备（结果见设备监控页）");
-  }
-  return r.releaseState + QStringLiteral(" / ") + r.targetStatus;
+  if (!r.lastError.isEmpty()) text += QStringLiteral("：") + r.lastError;
+  return text;
 }
 
 }  // namespace
@@ -271,15 +269,16 @@ void FirmwarePage::dispatchSelected() {
   if (dialog.exec() != QDialog::Accepted) return;
   const QString deviceId = deviceBox->currentData().toString();
 
-  // 推送固件是对现场设备的写操作，发出之前再确认一次
-  const auto answer = QMessageBox::question(
-      this, QStringLiteral("下发到设备"),
-      QStringLiteral("向 %1 下发 %2 %3？\n设备验签通过后会下载、写入备用分区并重启。")
-          .arg(deviceId, m.deviceModel, m.version));
-  if (answer != QMessageBox::Yes) return;
-
+  // 推送固件是对现场设备的写操作：重新输入口令确认（二次确认）
+  SecureBuffer password;
+  if (!askConfirmPassword(this, QStringLiteral("下发到设备"),
+                          QStringLiteral("向 %1 下发 %2 %3。\n设备验签通过后会下载、写入备用分区并重启。")
+                              .arg(deviceId, m.deviceModel, m.version),
+                          &password)) {
+    return;
+  }
   QString error;
-  if (!admin_->dispatchFirmware(m.pkgId, deviceId, &error)) {
+  if (!admin_->dispatchFirmware(m.pkgId, deviceId, password, &error)) {
     QMessageBox::warning(this, QStringLiteral("下发到设备"), QStringLiteral("没有下发。\n原因：%1").arg(error));
   }
   refreshDispatches();  // 被拒的下发不改数据库，但“设备刚好离线”那种情况会留下一条记录

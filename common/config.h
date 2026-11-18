@@ -35,12 +35,21 @@ struct TlsConfig {
   int maxCertDays = 90;
 };
 
+// 灰度发布参数（设计 4.2 节），配置 [rollout] 段可覆盖。
+struct RolloutParams {
+  int observeMs = 30000;     // 金丝雀全部成功后的观察期，期间没有失败和告警才进入“待确认全量”
+  int concurrency = 5;       // 新建发布时“同时推送台数”的默认值（设计里的并发上限 K）
+  int maxFailurePct = 20;    // 全量阶段失败台数超过全量目标的这个百分比，发布自动暂停
+};
+
 struct ServerConfig {
   QHostAddress listenAddress;
   quint16 listenPort = 0;
   int maxConnections = 200;
   int maxConnectionsPerIp = 5;
-  QString dbFile;  // SQLite 数据库文件（设备注册表、账号表、固件表、发布表）
+  QString dbFile;  // SQLite 数据库文件（设备注册表、账号表、固件表、发布表、审计日志表）
+  // 审计日志检查点文件：记下审计哈希链最新的哈希（设计第 13 章）。不配置时用“数据库文件名.audit-checkpoint”
+  QString auditCheckpointFile;
   // 固件库目录：导入的 .fwpkg 检查通过后以“包 ID.fwpkg”为名存放在这里，下发时从这里读分片。
   QString firmwareDir;
   // 固件签名公钥（FSK 公钥，PEM）和它的指纹，含义与 ClientConfig 里的同名项相同：
@@ -53,6 +62,7 @@ struct ServerConfig {
   int loginLockS = 600;
   QString logLevel = QStringLiteral("INFO");
   ProtocolParams protocol;
+  RolloutParams rollout;
   TlsConfig tls;
 };
 

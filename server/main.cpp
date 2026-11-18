@@ -22,6 +22,7 @@
 #include "server/business/login_throttle.h"
 #include "server/business/rollout_manager.h"
 #include "server/net/tcp_server.h"
+#include "server/security/audit_service.h"
 #include "server/security/operator_auth.h"
 #include "server/storage/database.h"
 #include "server/ui/main_window.h"
@@ -107,11 +108,19 @@ int main(int argc, char* argv[]) {
     return 4;
   }
 
+  // 审计日志：接着数据库里已有的哈希链往后写
+  fwds::AuditService auditService(&database, config.auditCheckpointFile);
+  if (!auditService.load(&error)) {
+    qCCritical(fwds::lcApp).noquote() << error;
+    return 4;
+  }
+
   // 安全层与业务层：账号、“允许下发”开关（每次启动默认关闭）、管理操作入口
   fwds::OperatorAuth operatorAuth(&database);
   fwds::DispatchGate dispatchGate;
   fwds::AdminService admin(&operatorAuth, &registry, &dispatchGate);
   admin.setCertVerifier(&security->verifier());
+  admin.setAuditService(&auditService);
 
   // 网络层 + 登录裁决 + 在线状态同步
   fwds::TcpServer server(config, security.get());
@@ -130,8 +139,11 @@ int main(int argc, char* argv[]) {
   }
   // 分片服务应答设备的 CHUNK_REQ；给哪台设备下发哪个包由发布模块裁决（开关、互锁）后交给它
   fwds::ChunkService chunkService(&server, config.protocol);
-  fwds::RolloutManager rollout(&database, config.protocol, &registry, &firmwareRepo, &chunkService,
-                               &dispatchGate);
+  // 灰度发布：设备的升级结果、进度、告警由事件入库模块（EventStore，事件补传对账一步）
+  // 去重入库后转给 RolloutManager 的 onDeviceResult / onDeviceProgress / onDeviceAlert
+  fwds::RolloutManager rollout(&database, config.protocol, config.rollout, &registry, &firmwareRepo,
+                               &chunkService, &dispatchGate);
+  rollout.setAuditService(&auditService);
   if (!rollout.load(&error)) {
     qCCritical(fwds::lcApp).noquote() << error;
     return 4;
@@ -150,7 +162,7 @@ int main(int argc, char* argv[]) {
   std::unique_ptr<fwds::MainWindow> window;
   if (!headless) {
     window = std::make_unique<fwds::MainWindow>(&server, &registry, &admin, &dispatchGate,
-                                                &firmwareRepo, &rollout);
+                                                &firmwareRepo, &rollout, &auditService);
     window->show();
     QTimer::singleShot(0, window.get(), &fwds::MainWindow::promptLogin);
   }

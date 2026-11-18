@@ -10,6 +10,8 @@ add_library(fwds_server_lib STATIC
   storage/database.cpp
   security/operator_auth.h
   security/operator_auth.cpp
+  security/audit_service.h
+  security/audit_service.cpp
   business/device_registry.h
   business/device_registry.cpp
   business/login_throttle.h
@@ -45,5 +47,9 @@ add_executable(fwds-server
   ui/account_page.cpp
   ui/firmware_page.h
   ui/firmware_page.cpp
+  ui/release_page.h
+  ui/release_page.cpp
+  ui/audit_page.h
+  ui/audit_page.cpp
 )
 target_link_libraries(fwds-server PRIVATE fwds_server_lib Qt6::Widgets)
