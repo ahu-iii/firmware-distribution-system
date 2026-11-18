@@ -48,6 +48,7 @@ add_executable(fwds-tests
   test_rollout.cpp
   test_audit.cpp
   test_run_log.cpp
+  test_demo_panel.cpp
   test_device_audit.cpp
   test_events.cpp
 )

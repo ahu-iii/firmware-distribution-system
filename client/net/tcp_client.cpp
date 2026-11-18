@@ -44,8 +44,29 @@ void TcpClient::stop(const QString& reason) {
   destroySocket();
 }
 
+void TcpClient::setNetworkBlocked(bool blocked) {
+  if (networkBlocked_ == blocked) return;
+  networkBlocked_ = blocked;
+  qCWarning(lcNet) << (blocked ? "network blocked by demo panel" : "network restored by demo panel");
+  if (blocked) {
+    dropConnection(QStringLiteral("模拟断网"));  // 已经在等重连或已停止时什么都不做
+  } else if (state_ == State::Backoff) {
+    reconnectTimer_.stop();
+    backoff_.reset();
+    connectNow();
+  }
+}
+
 void TcpClient::connectNow() {
   destroySocket();
+  if (networkBlocked_) {
+    // 模拟断网中：不发起连接，直接当作连不上，按退避序列再等
+    const int delayMs = backoff_.next();
+    setState(State::Backoff);
+    reconnectTimer_.start(delayMs);
+    emit reconnectScheduled(delayMs, QStringLiteral("网络不可达（模拟断网）"));
+    return;
+  }
   // 每次连接都用新的 socket 和新的 FrameChannel，序号从 1 重新开始
   socket_ = new QSslSocket(this);
   connect(socket_, &QAbstractSocket::disconnected, this,
