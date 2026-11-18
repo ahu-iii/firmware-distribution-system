@@ -7,6 +7,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_AUTOMOC ON)
 
 option(FWDS_BUILD_TESTS "构建单元测试" ON)
+option(FWDS_BUILD_DEMO "构建答辩演示的数据准备工具 fwds-demo-seed（不随安装包发布）" ON)
 # 程序版本（设计 8.4 节“版本标识”）：默认取上面 project() 里的版本。
 # 升级回滚演练时要有新旧两个版本，可以在配置时用 -DFWDS_VERSION=0.2.1 另编一份
 set(FWDS_VERSION "${PROJECT_VERSION}" CACHE STRING "程序版本 主.次.修订")
@@ -76,6 +77,10 @@ add_subdirectory(common)
 add_subdirectory(server)
 add_subdirectory(client)
 add_subdirectory(signer)
+
+if(FWDS_BUILD_DEMO)
+  add_subdirectory(demo)
+endif()
 
 if(FWDS_BUILD_TESTS)
   enable_testing()
