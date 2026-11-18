@@ -52,5 +52,7 @@ add_executable(fwds-tests
 target_link_libraries(fwds-tests PRIVATE fwds_server_lib fwds_client_lib fwds_signer_lib GTest::gtest)
 
 include(GoogleTest)
-gtest_discover_tests(fwds-tests)
+# 用例列表在 ctest 运行时再取（PRE_TEST），不在构建时运行测试程序：Windows 上 Qt 和 OpenSSL 的
+# DLL 不在 PATH 里时测试程序启动不了，构建时取列表会让整个构建失败
+gtest_discover_tests(fwds-tests DISCOVERY_MODE PRE_TEST)
 target_compile_definitions(fwds-tests PRIVATE FWDS_SOURCE_DIR="${CMAKE_SOURCE_DIR}")

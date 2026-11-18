@@ -28,7 +28,15 @@
 
 ## 构建与运行
 
-依赖：CMake 3.20+、支持 C++17 的编译器、Qt 6.4+（Core、Network、Sql、Widgets，SQLite 驱动）、OpenSSL 3、GoogleTest（系统没有时构建脚本会在线拉取）。Ubuntu 24.04 上：
+依赖：CMake 3.20+、支持 C++17 的编译器、Qt 6.4+（Core、Network、Sql、Widgets，SQLite 驱动，OpenSSL TLS 后端）、OpenSSL 3、GoogleTest（系统没有时构建脚本会在线拉取）。
+
+Linux、macOS、Windows 都能构建运行。打包（windeployqt、UPX、程序自签名）只做 Windows 版。
+
+> 验证情况：Linux 版在云端容器（Ubuntu 24.04、Qt 6.4.2、OpenSSL 3.0.13）里构建并跑通全部单元测试。macOS 和 Windows 的步骤还没有在真机上跑过：云端用 clang + libc++ 编译了全部源文件，没有报错（libc++ 是 macOS 用的 C++ 标准库），但链接、运行和界面要在真机上确认。
+
+### Linux
+
+Ubuntu 24.04 上：
 
 ```sh
 sudo apt install cmake ninja-build g++ qt6-base-dev libqt6sql6-sqlite libssl-dev libgtest-dev
@@ -41,6 +49,81 @@ cmake --preset dev -G Ninja
 cmake --build --preset dev
 ctest --preset dev
 ```
+
+### macOS
+
+macOS 13 及以上，Apple 芯片和 Intel 都可以。用 Homebrew 装依赖：
+
+```sh
+xcode-select --install                                    # 编译器（Apple Clang），装过就跳过
+brew install cmake ninja qt openssl@3 googletest
+```
+
+构建和测试的命令与 Linux 相同：
+
+```sh
+cmake --preset dev -G Ninja
+cmake --build --preset dev
+ctest --preset dev
+```
+
+说明：
+
+- `openssl@3` 是 keg-only（Homebrew 不把它链接进 `/opt/homebrew`，以免和系统的 LibreSSL 混淆），CMake 默认找不到。顶层 `CMakeLists.txt` 在 macOS 上会用 `brew --prefix` 自动找到 `qt` 和 `openssl@3`；不用 Homebrew 的，配置时自己加 `-DCMAKE_PREFIX_PATH=<Qt 目录> -DOPENSSL_ROOT_DIR=<OpenSSL 目录>`。
+- 推荐用 Homebrew 的 Qt：它带 OpenSSL TLS 后端，链接的也是同一份 `openssl@3`。Qt 官方安装器的 macOS 版运行时可能找不到 OpenSSL，这时 Qt 会换成系统的 Secure Transport，程序检查到后端不是 OpenSSL 会报错并拒绝启动网络（见设计文档 10.2 节），不会降级运行。
+- 程序是普通的命令行可执行文件，不是 `.app`，从终端启动即可，下面“本机联调”的命令原样可用（macOS 默认的 zsh 也支持 `read -s`）。界面窗口有时出现在终端后面，用 Cmd-Tab 切过去。
+- 开着系统防火墙时，服务端第一次监听可能弹出“是否允许接受传入网络连接”。本机联调只走 127.0.0.1，选哪个都不影响；两台机器联调要选允许。
+
+### Windows
+
+Windows 10/11，推荐 MSVC 2022。准备：
+
+1. Visual Studio 2022（社区版即可），勾选“使用 C++ 的桌面开发”，它自带 CMake 和 Ninja。
+2. Qt 在线安装器：选一个 Qt 6 版本下的 “MSVC 2022 64-bit”；在 “Developer and Designer Tools” 里勾选 “OpenSSL 3 Toolkit”，装好后目录里应有 `include`、`lib`、`bin`。也可以用 vcpkg 装 OpenSSL：`vcpkg install openssl:x64-windows`，目录是 `<vcpkg>\installed\x64-windows`。
+3. GoogleTest 不用装，构建时在线拉取；离线时用 `vcpkg install gtest:x64-windows`，并把 vcpkg 目录加进 `CMAKE_PREFIX_PATH`。
+
+在开始菜单打开 “Developer PowerShell for VS 2022”（让 cl.exe 可用），进入仓库根目录。下面两个目录按你的安装位置改：
+
+```powershell
+$Qt  = "C:\Qt\6.8.3\msvc2022_64"                 # Qt 套件目录，示例
+$Ssl = "C:\Qt\Tools\OpenSSLv3\Win_x64"           # OpenSSL 3 目录，示例，里面有 include、lib、bin
+
+cmake --preset dev -G Ninja -DCMAKE_PREFIX_PATH="$Qt" -DOPENSSL_ROOT_DIR="$Ssl"
+cmake --build --preset dev
+
+# 运行程序和测试前，让系统找得到 Qt 和 OpenSSL 的 DLL（只对当前窗口有效）
+$env:PATH = "$Qt\bin;$Ssl\bin;$env:PATH"
+ctest --preset dev
+```
+
+说明：
+
+- 程序在 `build\dev\bin\` 下：`fwds-signer.exe`、`fwds-server.exe`、`fwds-client.exe`。下面“本机联调”里的命令把 `build/dev/bin/` 换成 `build\dev\bin\`、行尾续行符 `\` 换成 PowerShell 的反引号 `` ` ``（或写成一行）即可。
+- 私钥口令在 PowerShell 里这样注入（输入不回显，Windows PowerShell 5.1 和 PowerShell 7 都能用）：
+
+  ```powershell
+  $env:FWDS_KEY_PASSPHRASE = [Net.NetworkCredential]::new('', (Read-Host "私钥口令" -AsSecureString)).Password
+  .\build\dev\bin\fwds-server.exe --config local\dev.local.ini
+  ```
+
+  程序读取后会清除这个变量；每个 PowerShell 窗口单独设置，互不影响。签发工具在控制台里直接提示输入口令。
+- 启动时报“Qt 没有加载 OpenSSL 运行库（当前 TLS 后端：schannel）”说明 `libssl-3-x64.dll`、`libcrypto-3-x64.dll` 不在 PATH 里也不在 exe 旁边。程序只用 OpenSSL 后端，不会退回 Windows 自带的 Schannel。
+- Windows 上 Qt 设置不了 NTFS 权限，私钥文件“仅所有者可读写”不生效（单元测试里对应的两处权限断言在 Windows 上不检查）。私钥本身是 AES-256-GCM 加密的，`local\` 放在自己的用户目录下即可。
+- 用 MinGW 也可以：Qt 选 MinGW 套件，OpenSSL 用 MSYS2 的 `mingw-w64-x86_64-openssl`，在 Qt 自带的 MinGW 命令行里构建。这条路没有验证过。
+- 两台机器联调时，服务端 `listen_address` 改成本机局域网地址，Windows 防火墙弹窗时允许专用网络。
+
+打包成可以拷到干净机器上运行的目录（演示机不用装 Qt）：
+
+```powershell
+cmake --preset release -G Ninja -DCMAKE_PREFIX_PATH="$Qt" -DOPENSSL_ROOT_DIR="$Ssl" -DFWDS_BUILD_TESTS=OFF
+cmake --build --preset release
+New-Item -ItemType Directory dist -Force
+Copy-Item build\release\bin\fwds-*.exe dist\
+Copy-Item "$Ssl\bin\libssl-3-x64.dll", "$Ssl\bin\libcrypto-3-x64.dll" dist\
+& "$Qt\bin\windeployqt.exe" --release --compiler-runtime dist\fwds-server.exe dist\fwds-client.exe
+```
+
+windeployqt 会把 Qt 的 DLL、平台插件、SQLite 驱动、TLS 后端插件和 VC++ 运行库安装包放进 `dist\`，但不带 OpenSSL 的 DLL，所以上面单独复制了两个。`fwds-signer.exe` 只在签发主机上用，不需要随设备分发。配置模板从 `deploy\config\` 复制，证书和私钥另外拷贝，不放进 `dist\` 的版本库或安装包。UPX 压缩和程序签名在这个目录上做（待实现）。
 
 ### 本机联调
 

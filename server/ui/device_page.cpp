@@ -101,7 +101,7 @@ DevicePage::DevicePage(DeviceRegistry* registry, AdminService* admin, QWidget* p
   eventsLayout->setContentsMargins(0, 0, 0, 0);
   eventsLayout->addWidget(new QLabel(QStringLiteral("安全告警与操作记录（最新的在最上面）"), eventsBox));
   eventsLayout->addWidget(events_);
-  connect(logBus(), &LogBus::event, this, &DevicePage::appendEvent);
+  connect(logBus(), &LogBus::logEvent, this, &DevicePage::appendEvent);
 
   auto* splitter = new QSplitter(Qt::Vertical, this);
   splitter->addWidget(table_);

@@ -60,7 +60,7 @@ void handler(QtMsgType type, const QMessageLogContext& ctx, const QString& msg) 
   const bool security = qstrcmp(ctx.category, "fwds.security") == 0 && rank(type) >= 2;
   const bool audit = qstrcmp(ctx.category, "fwds.audit") == 0;
   if (security || audit) {
-    emit logBus()->event(QString::fromUtf8(time), security || rank(type) >= 2, msg);
+    emit logBus()->logEvent(QString::fromUtf8(time), security || rank(type) >= 2, msg);
   }
 }
 

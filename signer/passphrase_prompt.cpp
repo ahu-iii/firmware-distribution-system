@@ -6,6 +6,8 @@
 #include "common/security/key_store.h"
 
 #ifdef _WIN32
+#define NOMINMAX             // 不让 windows.h 定义 min / max 宏，免得和 std::min / std::max 冲突
+#define WIN32_LEAN_AND_MEAN  // 只要控制台相关的声明
 #include <io.h>
 #include <windows.h>
 #else
