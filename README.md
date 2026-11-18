@@ -20,8 +20,8 @@
 | 目录 | 内容 | 现状 |
 |---|---|---|
 | `common/` | 协议常量、FrameCodec、配置加载、日志、网络层公共部分（FrameChannel、重连退避、信道安全接口）；固件 manifest、.fwpkg 容器和模拟固件镜像头；升级消息体编解码（UPDATE_NOTIFY、CHUNK_REQ、CHUNK_DATA）；`crypto/`（SecureBuffer、AES-256-GCM、PBKDF2、私钥文件封装、X.509 读取、SHA-256、RSA-3072-PSS 签名验签）；`security/`（TLS 配置、证书完整校验、私钥口令注入、ManifestVerifier：manifest 验签、分片哈希、整镜像校验；固件签名公钥指纹核对，两端共用） | 已实现 |
-| `server/` | 分发服务端 `fwds-server`：`net/`（TcpServer、Session、ConnLimiter）、`storage/`（SQLite）、`security/`（OperatorAuth：账号口令与角色权限）、`business/`（DeviceRegistry、LoginHandler、LoginThrottle、HeartbeatMonitor、AdminService、DispatchGate、FirmwareRepo、RolloutManager、ChunkService）、`ui/`（登录、设备监控、固件库、账号管理） | 网络层、TLS、设备注册表与指纹比对、登录失败锁定、账号与角色、“允许下发”开关、设备监控界面、固件库（导入时和启动时整包检查、固件表入库、导入界面）、单台下发（开关、型号、互锁裁决，发布表留痕）、分片服务（下发通知、按请求发分片、重连后重发通知）已实现；许可证验签（接入点已留）、按分组灰度与紧急停止、设备事件入库、审计哈希链待实现 |
-| `client/` | 设备客户端 `fwds-client`：`net/`（TcpClient：登录、心跳、断线重连）、`security/`（UpdateValidator：下载前验签、型号、防降级三项检查；DeviceAntiRollback）、`business/`（Updater：升级状态机；Downloader：分片下载；Bootloader：启动验签、自检、回滚；Provisioner：出厂写入）、`storage/`（ResumeStore、ChunkBitmap：断点落盘；BootConfig、SlotStore：boot.json 和 A/B 分区）、`ui/` | 网络层、TLS、下载前检查、防降级、分片下载与断点续传、整包校验、A/B 分区写入、模拟重启与自动回滚已实现并接入主程序；界面显示当前固件、分区、升级状态和进度；事件 outbox（PROGRESS / RESULT / ALERT 落盘上报）、许可证、演示面板待实现 |
+| `server/` | 分发服务端 `fwds-server`：`net/`（TcpServer、Session、ConnLimiter）、`storage/`（SQLite）、`security/`（OperatorAuth：账号口令与角色权限）、`business/`（DeviceRegistry、LoginHandler、LoginThrottle、HeartbeatMonitor、AdminService、DispatchGate、FirmwareRepo、RolloutManager、ChunkService）、`ui/`（登录、设备监控、固件库、账号管理） | 网络层、TLS、设备注册表与指纹比对、登录失败锁定、账号与角色、“允许下发”开关、设备监控界面、固件库（导入时和启动时整包检查、固件表入库、导入界面）、单台下发（开关、型号、互锁裁决，发布表留痕）、分片服务（下发通知、按请求发分片、重连后重发通知）已实现；按分组灰度发布（金丝雀、观察期、互锁、二次确认、紧急停止）、设备事件入库与补传对账、审计日志哈希链已实现；许可证验签（接入点已留）、运行日志页、设备侧审计类别待实现 |
+| `client/` | 设备客户端 `fwds-client`：`net/`（TcpClient：登录、心跳、断线重连）、`security/`（UpdateValidator：下载前验签、型号、防降级三项检查；DeviceAntiRollback）、`business/`（Updater：升级状态机；Downloader：分片下载；Bootloader：启动验签、自检、回滚；Provisioner：出厂写入）、`storage/`（ResumeStore、ChunkBitmap：断点落盘；BootConfig、SlotStore：boot.json 和 A/B 分区）、`ui/` | 网络层、TLS、下载前检查、防降级、分片下载与断点续传、整包校验、A/B 分区写入、模拟重启与自动回滚已实现并接入主程序；界面显示当前固件、分区、升级状态和进度；事件 outbox（PROGRESS / RESULT / ALERT 先落盘再上报，断网恢复后按序号补传）已实现；许可证、演示面板待实现 |
 | `signer/` | 离线签发工具 `fwds-signer` | 证书子命令（`ca-init`、`issue-cert`、`revoke`、`update-crl`、`list-certs`）和固件子命令（`fsk-init`、`make-image`、`sign-fw`、`verify-fw`）已实现；程序签名、许可证待实现 |
 | `tests/` | GoogleTest 单元测试；`attack_tools/` 是安全测试用的 Python 小工具（测试代理、连接洪泛、抓包明文搜索） | 335 条，覆盖帧编解码、配置、连接限制、加密基础件、证书校验、签发工具、TLS 双向认证、网络层（全部走真实 TLS）、账号口令与锁定、角色权限、设备注册表、设备登录（2005 / 2006 / 2007）、RSA-PSS 签名验签、manifest 解析、先验签后解析、分片与整镜像校验、.fwpkg 容器与篡改检测、升级消息体编解码、断点位图与落盘、分片下载（单片重试、窗口超时、取消、3004）、断点续传联调（断线、设备重启、服务端重启、缓存被改、固件更换）、防降级边界、boot.json 与分区写入顺序、Bootloader 决策（转正、回滚、另一分区、恢复模式）、升级状态机全流程（成功切换分区、自检失败回滚、降级被拒、写入前篡改、各阶段取消、重启途中断电）、出厂写入、服务端固件库（导入、拒绝篡改和伪造的包、重启后重新检查）、单台下发联调（正常升级、自检失败回滚、降级被拒、开关与角色、离线不下发、互锁、服务端重启后暂停） |
 | `deploy/config/` | `dev.ini`、`test.ini`、`prod.ini` 配置模板 | 已提供 |
@@ -32,7 +32,7 @@
 
 Linux、macOS、Windows 都能构建运行。打包（windeployqt、UPX、程序自签名）只做 Windows 版。
 
-> 验证情况：Linux 版在云端容器（Ubuntu 24.04、Qt 6.4.2、OpenSSL 3.0.13）里构建并跑通全部单元测试。macOS 和 Windows 的步骤还没有在真机上跑过：云端用 clang + libc++ 编译了全部源文件，没有报错（libc++ 是 macOS 用的 C++ 标准库），但链接、运行和界面要在真机上确认。
+> 验证情况：Linux 版在云端容器（Ubuntu 24.04、Qt 6.4.2、OpenSSL 3.0.13）里构建并跑通全部单元测试。macOS 版 2026-11-18 在真机上验证过：Homebrew 依赖、335 条单元测试全过，本机联调（服务端 + 一台设备）上线正常，一次正常升级成功（分区 a 的 2.0.0 升到 2.1.0，活动分区切到 b）。Windows 的步骤还没有在真机上跑过。
 
 ### Linux
 
@@ -70,6 +70,7 @@ ctest --preset dev
 说明：
 
 - `openssl@3` 是 keg-only（Homebrew 不把它链接进 `/opt/homebrew`，以免和系统的 LibreSSL 混淆），CMake 默认找不到。顶层 `CMakeLists.txt` 在 macOS 上会用 `brew --prefix` 自动找到 `qt` 和 `openssl@3`；不用 Homebrew 的，配置时自己加 `-DCMAKE_PREFIX_PATH=<Qt 目录> -DOPENSSL_ROOT_DIR=<OpenSSL 目录>`。
+- 只支持 OpenSSL 3。机器上还装着 `openssl@4`（或别的版本被 `brew link` 进了 `/opt/homebrew`）时，以前可能编进另一版的头文件、测试失败；现在 CMake 把 OpenSSL 3 的头文件目录排在最前面，找到的不是 3.x 会直接报错，程序运行时也检查 Qt 和本程序用的都是 3.x。仍有问题时执行 `brew unlink openssl@4 && brew link openssl@3`，删掉 `build/dev` 后重新配置。
 - 推荐用 Homebrew 的 Qt：它带 OpenSSL TLS 后端，链接的也是同一份 `openssl@3`。Qt 官方安装器的 macOS 版运行时可能找不到 OpenSSL，这时 Qt 会换成系统的 Secure Transport，程序检查到后端不是 OpenSSL 会报错并拒绝启动网络（见设计文档 10.2 节），不会降级运行。
 - 程序是普通的命令行可执行文件，不是 `.app`，从终端启动即可，下面“本机联调”的命令原样可用（macOS 默认的 zsh 也支持 `read -s`）。界面窗口有时出现在终端后面，用 Cmd-Tab 切过去。
 - 开着系统防火墙时，服务端第一次监听可能弹出“是否允许接受传入网络连接”。本机联调只走 127.0.0.1，选哪个都不影响；两台机器联调要选允许。

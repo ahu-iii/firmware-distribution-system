@@ -12,6 +12,9 @@
 
 namespace fwds {
 
+// 运行时实际加载的 libcrypto 是不是 3.x（编译时用的头文件由 openssl_util.cpp 里的 static_assert 保证）。
+bool opensslRuntimeIs3();
+
 // 每种 OpenSSL 对象对应自己的释放函数。
 struct OsslDeleter {
   void operator()(EVP_PKEY* p) const { EVP_PKEY_free(p); }
