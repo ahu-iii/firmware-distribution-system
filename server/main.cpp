@@ -23,6 +23,7 @@
 #include "server/business/rollout_manager.h"
 #include "server/net/tcp_server.h"
 #include "server/security/audit_service.h"
+#include "server/security/device_audit.h"
 #include "server/security/operator_auth.h"
 #include "server/storage/database.h"
 #include "server/ui/main_window.h"
@@ -160,6 +161,8 @@ int main(int argc, char* argv[]) {
                    &fwds::RolloutManager::onDeviceProgress);
   QObject::connect(&eventStore, &fwds::EventStore::alertStored, &rollout,
                    &fwds::RolloutManager::onDeviceAlert);
+  // 设备侧的登录、断线、心跳超时、升级结果、安全告警写进审计日志（CONN / HB / UPGRADE / SECURITY）
+  fwds::DeviceAudit deviceAudit(&server, &eventStore, &registry, &auditService);
   QObject::connect(&server, &fwds::TcpServer::sessionOpened, &loginHandler,
                    [&loginHandler](fwds::Session* session) {
                      QObject::connect(session, &fwds::Session::loginRequested, &loginHandler,

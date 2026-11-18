@@ -12,6 +12,8 @@ add_library(fwds_server_lib STATIC
   security/operator_auth.cpp
   security/audit_service.h
   security/audit_service.cpp
+  security/device_audit.h
+  security/device_audit.cpp
   business/device_registry.h
   business/device_registry.cpp
   business/login_throttle.h

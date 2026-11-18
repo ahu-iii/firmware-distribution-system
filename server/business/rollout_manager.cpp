@@ -624,13 +624,10 @@ void RolloutManager::onDeviceResult(const QString& deviceId, qint64 releaseId,
   // 有了结果，删掉下发记录：设备重连时不再重发这个包的通知。用发布里的包 ID，回滚时设备报的是空串
   chunks_->finish(deviceId, releasePkgId);
 
-  DeviceRecord device;
-  registry_->find(deviceId, &device);
-  record(deviceId, deviceId,
-         QStringLiteral("发布 #%1：设备上报结果 %2%3")
-             .arg(id)
-             .arg(result, error.isEmpty() ? QString() : QStringLiteral("（%1）").arg(error)),
-         status != QLatin1String("success"), device.peerAddress);
+  // 设备上报的结果由 DeviceAudit 记进审计日志（UPGRADE 类），这里只写运行日志
+  qCInfo(lcApp).noquote() << QStringLiteral("发布 #%1：设备 %2 上报结果 %3 %4")
+                                 .arg(id)
+                                 .arg(deviceId, result, error);
 
   // 推送阶段：空出了一个位置，推下一台并重新判断；观察期：看是否要暂停
   Release r;
