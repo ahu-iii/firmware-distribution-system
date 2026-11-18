@@ -11,7 +11,7 @@
 - [实施方案](docs/实施方案.md)：总体思路、交付物清单、验收要求对照表、缺口清单、里程碑与分工
 - [设计文档](docs/系统设计说明书.md)：功能设计与安全设计（图的源码为 Mermaid，导出的 SVG/PNG 在 [docs/diagrams](docs/diagrams/)）
 - [通信协议文档](docs/通信协议文档.md)：TLS 信道规定、帧格式、消息定义、错误码
-- [测试报告](docs/测试验证报告.md)：功能测试与安全测试，v0.2 为设计阶段方案，78 条用例，结果在测试阶段填写
+- [测试报告](docs/测试验证报告.md)：功能测试与安全测试，78 条用例；v0.3 回填了 2026-11-18 云端实测的 46 条结果，正式证据待真机补做（见第 8 节）
 - [自查表](docs/自查表.md)（底稿）、[现场基线材料](docs/现场基线材料.md)（工况台账、设备协议台账、不可改约束清单）、[数据来源与脱敏声明](docs/数据来源与脱敏声明.md)
 - [docs/requirements](docs/requirements/)：《项目落地要求任务书》《资料大模板》原件
 
@@ -23,7 +23,7 @@
 | `server/` | 分发服务端 `fwds-server`：`net/`（TcpServer、Session、ConnLimiter）、`storage/`（SQLite）、`security/`（OperatorAuth：账号口令与角色权限）、`business/`（DeviceRegistry、LoginHandler、LoginThrottle、HeartbeatMonitor、AdminService、DispatchGate、FirmwareRepo、RolloutManager、ChunkService）、`ui/`（登录、设备监控、固件库、账号管理） | 网络层、TLS、设备注册表与指纹比对、登录失败锁定、账号与角色、“允许下发”开关、设备监控界面、固件库（导入时和启动时整包检查、固件表入库、导入界面）、单台下发（开关、型号、互锁裁决，发布表留痕）、分片服务（下发通知、按请求发分片、重连后重发通知）已实现；许可证验签（接入点已留）、按分组灰度与紧急停止、设备事件入库、审计哈希链待实现 |
 | `client/` | 设备客户端 `fwds-client`：`net/`（TcpClient：登录、心跳、断线重连）、`security/`（UpdateValidator：下载前验签、型号、防降级三项检查；DeviceAntiRollback）、`business/`（Updater：升级状态机；Downloader：分片下载；Bootloader：启动验签、自检、回滚；Provisioner：出厂写入）、`storage/`（ResumeStore、ChunkBitmap：断点落盘；BootConfig、SlotStore：boot.json 和 A/B 分区）、`ui/` | 网络层、TLS、下载前检查、防降级、分片下载与断点续传、整包校验、A/B 分区写入、模拟重启与自动回滚已实现并接入主程序；界面显示当前固件、分区、升级状态和进度；事件 outbox（PROGRESS / RESULT / ALERT 落盘上报）、许可证、演示面板待实现 |
 | `signer/` | 离线签发工具 `fwds-signer` | 证书子命令（`ca-init`、`issue-cert`、`revoke`、`update-crl`、`list-certs`）和固件子命令（`fsk-init`、`make-image`、`sign-fw`、`verify-fw`）已实现；程序签名、许可证待实现 |
-| `tests/` | GoogleTest 单元测试 | 299 条，覆盖帧编解码、配置、连接限制、加密基础件、证书校验、签发工具、TLS 双向认证、网络层（全部走真实 TLS）、账号口令与锁定、角色权限、设备注册表、设备登录（2005 / 2006 / 2007）、RSA-PSS 签名验签、manifest 解析、先验签后解析、分片与整镜像校验、.fwpkg 容器与篡改检测、升级消息体编解码、断点位图与落盘、分片下载（单片重试、窗口超时、取消、3004）、断点续传联调（断线、设备重启、服务端重启、缓存被改、固件更换）、防降级边界、boot.json 与分区写入顺序、Bootloader 决策（转正、回滚、另一分区、恢复模式）、升级状态机全流程（成功切换分区、自检失败回滚、降级被拒、写入前篡改、各阶段取消、重启途中断电）、出厂写入、服务端固件库（导入、拒绝篡改和伪造的包、重启后重新检查）、单台下发联调（正常升级、自检失败回滚、降级被拒、开关与角色、离线不下发、互锁、服务端重启后暂停） |
+| `tests/` | GoogleTest 单元测试；`attack_tools/` 是安全测试用的 Python 小工具（测试代理、连接洪泛、抓包明文搜索） | 300 条，覆盖帧编解码、配置、连接限制、加密基础件、证书校验、签发工具、TLS 双向认证、网络层（全部走真实 TLS）、账号口令与锁定、角色权限、设备注册表、设备登录（2005 / 2006 / 2007）、RSA-PSS 签名验签、manifest 解析、先验签后解析、分片与整镜像校验、.fwpkg 容器与篡改检测、升级消息体编解码、断点位图与落盘、分片下载（单片重试、窗口超时、取消、3004）、断点续传联调（断线、设备重启、服务端重启、缓存被改、固件更换）、防降级边界、boot.json 与分区写入顺序、Bootloader 决策（转正、回滚、另一分区、恢复模式）、升级状态机全流程（成功切换分区、自检失败回滚、降级被拒、写入前篡改、各阶段取消、重启途中断电）、出厂写入、服务端固件库（导入、拒绝篡改和伪造的包、重启后重新检查）、单台下发联调（正常升级、自检失败回滚、降级被拒、开关与角色、离线不下发、互锁、服务端重启后暂停） |
 | `deploy/config/` | `dev.ini`、`test.ini`、`prod.ini` 配置模板 | 已提供 |
 
 ## 构建与运行

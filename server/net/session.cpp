@@ -43,6 +43,13 @@ Session::Session(quint64 id, QSslSocket* socket, const ProtocolParams& params,
       close(QStringLiteral("TLS 握手失败"));
       return;
     }
+    if (e == QAbstractSocket::SslInternalError) {
+      // 握手之后的 TLS 错误：记录的认证标签校验失败，即密文被改动或记录被重放，按安全事件记录
+      qCCritical(lcSecurity).noquote() << "session" << id_ << peerAddress_.toString()
+                                       << "TLS record rejected:" << socket_->errorString();
+      close(QStringLiteral("TLS 记录校验失败"));
+      return;
+    }
     qCWarning(lcNet) << "session" << id_ << "socket error:" << socket_->errorString();
     close(QStringLiteral("网络错误"));
   });
