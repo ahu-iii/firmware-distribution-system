@@ -21,6 +21,7 @@ add_library(fwds_server_lib STATIC
   business/login_throttle.h
   business/login_throttle.cpp
   business/license_verifier.h
+  business/license_verifier.cpp
   business/login_handler.h
   business/login_handler.cpp
   business/heartbeat_monitor.h

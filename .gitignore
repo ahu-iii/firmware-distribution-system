@@ -13,3 +13,6 @@ CMakeUserPresets.json
 /data/
 /local/
 *.local.ini
+
+# 打包脚本的输出
+/dist/

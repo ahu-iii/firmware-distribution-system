@@ -145,7 +145,27 @@ bool Database::open(const QString& path, QString* error) {
     *error = QStringLiteral("数据库初始化失败：%1").arg(pragma.lastError().text());
     return false;
   }
-  return createSchema(error) && upgradeReleaseTarget(error);
+  // 先看结构版本：比本程序新的库是新版本程序建的，旧程序不认识新结构，硬用可能写坏数据
+  const int found = schemaVersion();
+  if (found > kSchemaVersion) {
+    *error = QStringLiteral("数据库结构版本 %1 比本程序支持的 %2 新：回滚到旧版本时要先恢复升级前的数据库备份")
+                 .arg(found)
+                 .arg(kSchemaVersion);
+    return false;
+  }
+  if (!createSchema(error) || !upgradeReleaseTarget(error)) return false;
+  if (found != kSchemaVersion &&
+      !pragma.exec(QStringLiteral("PRAGMA user_version = %1").arg(kSchemaVersion))) {
+    *error = QStringLiteral("写入数据库结构版本失败：%1").arg(pragma.lastError().text());
+    return false;
+  }
+  return true;
+}
+
+int Database::schemaVersion() const {
+  QSqlQuery query(handle());
+  if (!query.exec(QStringLiteral("PRAGMA user_version")) || !query.next()) return -1;
+  return query.value(0).toInt();
 }
 
 bool Database::createSchema(QString* error) {

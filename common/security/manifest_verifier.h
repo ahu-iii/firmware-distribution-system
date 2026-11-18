@@ -36,6 +36,10 @@ class ManifestVerifier {
   ManifestCheck verify(const QByteArray& manifestRaw, const QByteArray& signature, Manifest* out,
                        QString* error) const;
 
+  // 用同一把 FSK 公钥验其他用途的签名：设备许可证（前缀 FWDS-LIC-1）、程序签名（FWDS-EXE-1）。
+  // message 由调用方按协议文档 7.3 节拼好（用途前缀 ‖ 内容）。没装公钥时一律返回 false。
+  bool verifySignature(const QByteArray& message, const QByteArray& signature) const;
+
  private:
   EvpPkeyPtr publicKey_;
 };

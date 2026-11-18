@@ -10,6 +10,12 @@
 
 namespace fwds {
 
+// 数据库结构版本，存在 SQLite 的 PRAGMA user_version 里（设计 8.4 节“版本标识”）。
+// 改了表结构就加 1，并在 open() 里写好从旧版本迁移的步骤。
+//   1：最初的结构（这个编号出现之前建的库，user_version 是 0，按 1 处理）
+//   2：release_target.status 增加 held
+inline constexpr int kSchemaVersion = 2;
+
 class Database {
  public:
   Database();
@@ -17,8 +23,13 @@ class Database {
   Database(const Database&) = delete;
   Database& operator=(const Database&) = delete;
 
-  // 打开（不存在则创建）数据库并建表。path 为 ":memory:" 时建在内存里（单元测试用）。
+  // 打开（不存在则创建）数据库，建表并把旧结构迁移到 kSchemaVersion。
+  // 数据库的结构版本比本程序新（回滚到旧程序却没有恢复数据库备份）时拒绝打开，不去动它。
+  // path 为 ":memory:" 时建在内存里（单元测试用）。
   bool open(const QString& path, QString* error);
+
+  // 当前数据库的结构版本（open 成功后等于 kSchemaVersion）。
+  int schemaVersion() const;
 
   // Qt SQL 的连接句柄，用来构造 QSqlQuery。
   QSqlDatabase handle() const;

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(firmware-distribution-system VERSION 0.1.0 LANGUAGES CXX)
+project(firmware-distribution-system VERSION 0.2.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -7,6 +7,12 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_AUTOMOC ON)
 
 option(FWDS_BUILD_TESTS "构建单元测试" ON)
+# 程序版本（设计 8.4 节“版本标识”）：默认取上面 project() 里的版本。
+# 升级回滚演练时要有新旧两个版本，可以在配置时用 -DFWDS_VERSION=0.2.1 另编一份
+set(FWDS_VERSION "${PROJECT_VERSION}" CACHE STRING "程序版本 主.次.修订")
+# 发布版强制程序自校验（设计第 15 节）：打开后，可执行文件旁边没有签名文件 <程序>.sig 就拒绝运行。
+# 开发版每次编译程序都会变，默认不强制：有签名文件就校验（不符同样拒绝运行），没有只警告
+option(FWDS_REQUIRE_EXE_SIGNATURE "缺少程序签名时拒绝运行（发布版打开）" OFF)
 
 # macOS：Qt 和 OpenSSL 3 一般用 Homebrew 装。openssl@3 是 keg-only（不链接进 /opt/homebrew，
 # 避免和系统自带的 LibreSSL 混淆），CMake 默认找不到，这里用 brew --prefix 问出安装位置。

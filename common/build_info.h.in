@@ -1,0 +1,12 @@
+// 由 CMake 根据 common/build_info.h.in 生成，不要手改（设计 8.4 节“版本标识”）。
+#pragma once
+
+namespace fwds {
+
+// 程序版本 主.次.修订：来自顶层 CMakeLists.txt 的 FWDS_VERSION
+inline constexpr char kAppVersion[] = "@FWDS_VERSION@";
+
+// 发布版为 true：缺少程序签名文件时拒绝运行（common/security/exe_signature.h）
+inline constexpr bool kRequireExeSignature = @FWDS_REQUIRE_EXE_SIGNATURE_BOOL@;
+
+}  // namespace fwds

@@ -1,21 +1,28 @@
 // fwds-signer：离线签发工具（命令行），只在签发主机上运行。
 // 证书相关的子命令（ca-init、issue-cert、revoke、update-crl、list-certs）和
-// 固件相关的（fsk-init、make-image、sign-fw、verify-fw）已实现；sign-exe、issue-lic 待实现。
+// 固件相关的（fsk-init、make-image、sign-fw、verify-fw）、程序签名 sign-exe、许可证 issue-lic。
 //
 // 口令：CA 口令每次在终端输入（不回显）；没有终端时从环境变量 FWDS_CA_PASSPHRASE 读取。
 // 新签发的服务端 / 设备私钥的口令同理，环境变量是 FWDS_KEY_PASSPHRASE；
 // 固件签名密钥 FSK 的口令对应 FWDS_FSK_PASSPHRASE。
 #include <QCommandLineParser>
 #include <QCoreApplication>
+#include <QDateTime>
 #include <QFile>
+#include <QRegularExpression>
+#include <QSaveFile>
 #include <QTextStream>
 #include <memory>
 
+#include "common/build_info.h"
 #include "common/config.h"
 #include "common/crypto/rand.h"
+#include "common/crypto/rsa_pss.h"
 #include "common/firmware_image.h"
 #include "common/firmware_package.h"
+#include "common/security/exe_signature.h"
 #include "common/security/key_store.h"
+#include "common/security/license.h"
 #include "signer/ca_store.h"
 #include "signer/firmware_packer.h"
 #include "signer/fsk_store.h"
@@ -42,7 +49,7 @@ const Command kCommands[] = {
     {"make-image", "生成模拟固件镜像（可生成“自检必定失败”的镜像，演示回滚用）"},
     {"sign-fw", "对固件镜像生成 manifest、签名并打包为 .fwpkg"},
     {"verify-fw", "用 FSK 公钥完整检查一个 .fwpkg"},
-    {"sign-exe", "给客户端程序签名"},
+    {"sign-exe", "给服务端、客户端程序签名（打包时在 UPX 之后做）"},
     {"issue-lic", "签发设备许可证 device.lic"},
 };
 
@@ -482,12 +489,135 @@ int cmdVerifyFw(const QStringList& args) {
   return 0;
 }
 
+// 读 FSK 公钥和私钥：公钥用来在签完之后自检，私钥要输入口令才能解开。
+bool openFsk(const QString& dir, fwds::ManifestVerifier* verifier, fwds::EvpPkeyPtr* key) {
+  const fwds::FskStore store(dir);
+  if (!loadVerifier(store.publicKeyPath(), verifier)) return false;
+  SecureBuffer passphrase;
+  QString error;
+  if (!fwds::obtainPassphrase(fwds::kFskPassphraseEnv, QStringLiteral("FSK 口令："), false,
+                              &passphrase, &error) ||
+      !store.loadPrivateKey(passphrase, key, &error)) {
+    fail(error);
+    return false;
+  }
+  return true;
+}
+
+// sign-exe：对程序文件签名，签名写在旁边的 <程序>.sig（设计第 15 节）。
+// 可以一次给几个程序签名；每签一个都立刻用公钥按程序启动时的做法验一遍。
+int cmdSignExe(const QStringList& args) {
+  QCommandLineParser parser;
+  parser.setApplicationDescription(QStringLiteral(
+      "对程序文件签名：签名覆盖 FWDS-EXE-1 ‖ SHA-256(程序文件)，写到 <程序>.sig。程序启动时用 FSK 公钥校验自己"));
+  const QCommandLineOption dirOpt(QStringLiteral("fsk-dir"), QStringLiteral("FSK 目录（必填）"),
+                                  QStringLiteral("dir"));
+  const QCommandLineOption exeOpt(QStringLiteral("exe"),
+                                  QStringLiteral("要签名的程序文件（必填，可以写多次）"),
+                                  QStringLiteral("file"));
+  parser.addHelpOption();
+  parser.addOption(dirOpt);
+  parser.addOption(exeOpt);
+  parser.process(args);
+  if (!parser.isSet(dirOpt) || !parser.isSet(exeOpt)) return fail(QStringLiteral("缺少 --fsk-dir 或 --exe"));
+
+  fwds::ManifestVerifier verifier;
+  fwds::EvpPkeyPtr key;
+  if (!openFsk(parser.value(dirOpt), &verifier, &key)) return 1;
+  for (const QString& exe : parser.values(exeOpt)) {
+    QByteArray digest;
+    QByteArray signature;
+    QString error;
+    if (!fwds::sha256OfFile(exe, &digest, &error) ||
+        !fwds::rsaPssSign(key.get(), fwds::exeSignedMessage(digest), &signature, &error)) {
+      return fail(error);
+    }
+    // QSaveFile：先写临时文件再改名，中途失败不会留下半个签名文件
+    QSaveFile sigFile(fwds::exeSignaturePath(exe));
+    if (!sigFile.open(QIODevice::WriteOnly) || sigFile.write(signature) != signature.size() ||
+        !sigFile.commit()) {
+      return fail(QStringLiteral("无法写入 %1").arg(sigFile.fileName()));
+    }
+    if (fwds::verifyExecutable(exe, verifier, &error) != fwds::ExeCheck::Ok) {
+      return fail(QStringLiteral("签名后自检未通过：%1").arg(error));
+    }
+    out() << "已签名：" << exe << "\n  签名文件：" << fwds::exeSignaturePath(exe)
+          << "\n  程序哈希：" << QString::fromLatin1(digest.toHex().left(8)) << "…\n";
+  }
+  out() << "签名之后不要再改动程序文件（包括 UPX 加壳），否则程序启动时自校验失败\n";
+  return 0;
+}
+
+// issue-lic：签发设备许可证 device.lic（协议文档 7.3 节）。
+// 硬件指纹在设备主机上用 fwds-client --hw-fingerprint 取得，抄到签发主机上。
+int cmdIssueLic(const QStringList& args) {
+  QCommandLineParser parser;
+  parser.setApplicationDescription(
+      QStringLiteral("签发设备许可证：绑定设备 ID 和设备主机的硬件指纹，带有效期，用 FSK 签名"));
+  const QCommandLineOption dirOpt(QStringLiteral("fsk-dir"), QStringLiteral("FSK 目录（必填）"),
+                                  QStringLiteral("dir"));
+  const QCommandLineOption idOpt(QStringLiteral("device-id"), QStringLiteral("设备 ID（必填）"),
+                                 QStringLiteral("id"));
+  const QCommandLineOption hwOpt(
+      QStringLiteral("hw-fingerprint"),
+      QStringLiteral("设备主机的硬件指纹，64 个十六进制字符，用 fwds-client --hw-fingerprint 取得（必填）"),
+      QStringLiteral("hex"));
+  const QCommandLineOption daysOpt(QStringLiteral("days"), QStringLiteral("有效天数，默认 365"),
+                                   QStringLiteral("n"), QStringLiteral("365"));
+  const QCommandLineOption outOpt(QStringLiteral("out"), QStringLiteral("输出的许可证文件（必填）"),
+                                  QStringLiteral("file"));
+  parser.addHelpOption();
+  for (const QCommandLineOption& option : {dirOpt, idOpt, hwOpt, daysOpt, outOpt}) parser.addOption(option);
+  parser.process(args);
+  for (const QCommandLineOption& option : {dirOpt, idOpt, hwOpt, outOpt}) {
+    if (!parser.isSet(option)) return fail(QStringLiteral("缺少 --%1").arg(option.names().first()));
+  }
+  bool ok = false;
+  const int days = parser.value(daysOpt).toInt(&ok);
+  if (!ok || days < 1 || days > 3650) return fail(QStringLiteral("--days 必须在 1 ~ 3650 之间"));
+  const QString hw = parser.value(hwOpt).trimmed().toLower();
+  static const QRegularExpression hexRe(QStringLiteral("\\A[0-9a-f]{64}\\z"));
+  if (!hexRe.match(hw).hasMatch()) return fail(QStringLiteral("--hw-fingerprint 必须是 64 个十六进制字符"));
+
+  fwds::License license;
+  license.deviceId = parser.value(idOpt);
+  license.hwFingerprint = hw;
+  license.issuedAtMs = QDateTime::currentMSecsSinceEpoch();
+  license.expiresAtMs = license.issuedAtMs + qint64(days) * 24 * 3600 * 1000;
+
+  fwds::ManifestVerifier verifier;
+  fwds::EvpPkeyPtr key;
+  if (!openFsk(parser.value(dirOpt), &verifier, &key)) return 1;
+  const QByteArray body = fwds::encodeLicenseBody(license);
+  QByteArray signature;
+  QString error;
+  if (!fwds::rsaPssSign(key.get(), fwds::licenseSignedMessage(body), &signature, &error)) {
+    return fail(error);
+  }
+  const QByteArray file = fwds::encodeLicenseFile(body, signature);
+  // 写出之前按服务端的做法验一遍（签名、设备 ID、有效期），格式写错的许可证不发出去
+  fwds::License parsed;
+  if (!fwds::verifyLicense(file, verifier, &parsed, &error) ||
+      !fwds::checkLicense(parsed, license.deviceId, hw, license.issuedAtMs, &error)) {
+    return fail(QStringLiteral("许可证自检未通过：%1").arg(error));
+  }
+  const QString outPath = parser.value(outOpt);
+  QSaveFile outFile(outPath);
+  if (!outFile.open(QIODevice::WriteOnly) || outFile.write(file) != file.size() || !outFile.commit()) {
+    return fail(QStringLiteral("无法写入 %1").arg(outPath));
+  }
+  out() << "许可证已签发：" << outPath << "\n  设备 ID：  " << license.deviceId << "\n  硬件指纹："
+        << hw.left(8) << "…\n  到期时间："
+        << QDateTime::fromMSecsSinceEpoch(license.expiresAtMs, Qt::UTC).toString(Qt::ISODate) << "\n";
+  return 0;
+}
+
 }  // namespace
 
 int main(int argc, char* argv[]) {
   QCoreApplication app(argc, argv);
   QCoreApplication::setApplicationName(QStringLiteral("fwds-signer"));
-  QCoreApplication::setApplicationVersion(QStringLiteral("0.1.0"));
+  QCoreApplication::setApplicationVersion(QString::fromLatin1(fwds::kAppVersion));
 
   QStringList args = app.arguments();
   if (args.size() < 2 || args.at(1) == QLatin1String("--help") || args.at(1) == QLatin1String("-h")) {
@@ -506,13 +636,9 @@ int main(int argc, char* argv[]) {
   if (command == QLatin1String("make-image")) return cmdMakeImage(args);
   if (command == QLatin1String("sign-fw")) return cmdSignFw(args);
   if (command == QLatin1String("verify-fw")) return cmdVerifyFw(args);
+  if (command == QLatin1String("sign-exe")) return cmdSignExe(args);
+  if (command == QLatin1String("issue-lic")) return cmdIssueLic(args);
 
-  for (const Command& c : kCommands) {
-    if (command == QLatin1String(c.name)) {
-      err() << "子命令 " << c.name << " 尚未实现\n";
-      return 2;
-    }
-  }
   err() << "未知子命令：" << command << "\n\n";
   printUsage(err());
   return 1;
