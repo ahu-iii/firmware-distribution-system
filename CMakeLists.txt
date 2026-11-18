@@ -8,24 +8,46 @@ set(CMAKE_AUTOMOC ON)
 
 option(FWDS_BUILD_TESTS "构建单元测试" ON)
 
-# macOS：Qt 和 OpenSSL 3 一般用 Homebrew 装。openssl@3 是 keg-only（不链接进 /opt/homebrew，
-# 避免和系统自带的 LibreSSL 混淆），CMake 默认找不到，这里用 brew --prefix 问出安装位置。
+# macOS：Qt 和 OpenSSL 一般用 Homebrew 装，这里用 brew --prefix 问出安装位置。
+# 本程序必须和 Qt 的 TLS 后端用同一版 OpenSSL（一个进程里不能混两版 libcrypto），所以不写死 openssl@3，
+# 而是看 Qt 的 TLS 插件实际链接的是哪一份 libcrypto（Homebrew 的 Qt 6.12 起改用 openssl@4），就用那一份。
+# 这些 OpenSSL 都是 keg-only（不链接进 /opt/homebrew），CMake 默认找不到，也和 brew link 了哪一版无关。
 # 命令行已经用 -DCMAKE_PREFIX_PATH / -DOPENSSL_ROOT_DIR 指定了的，以命令行为准；不用 Homebrew 时什么也不做。
 if(APPLE)
   find_program(FWDS_BREW brew)
   if(FWDS_BREW)
-    foreach(formula qt openssl@3)
-      execute_process(COMMAND ${FWDS_BREW} --prefix ${formula}
+    execute_process(COMMAND ${FWDS_BREW} --prefix qt
+                    OUTPUT_VARIABLE prefix OUTPUT_STRIP_TRAILING_WHITESPACE
+                    RESULT_VARIABLE result ERROR_QUIET)
+    if(result EQUAL 0 AND EXISTS "${prefix}")
+      list(APPEND CMAKE_PREFIX_PATH "${prefix}")
+    endif()
+
+    if(NOT OPENSSL_ROOT_DIR)
+      # Qt 的 TLS 插件在 qtbase 里，用 otool -L 列出它依赖的动态库，取出 libcrypto 所在的目录
+      execute_process(COMMAND ${FWDS_BREW} --prefix qtbase
+                      OUTPUT_VARIABLE qtbase OUTPUT_STRIP_TRAILING_WHITESPACE
+                      RESULT_VARIABLE result ERROR_QUIET)
+      set(plugin "${qtbase}/share/qt/plugins/tls/libqopensslbackend.dylib")
+      if(result EQUAL 0 AND EXISTS "${plugin}")
+        execute_process(COMMAND otool -L "${plugin}" OUTPUT_VARIABLE deps ERROR_QUIET)
+        # 例如 “/opt/homebrew/opt/openssl@4/lib/libcrypto.4.dylib”，取 lib 的上一级目录
+        if(deps MATCHES "[ \t\n](/[^ \t\n]+)/lib/libcrypto[.0-9]*\.dylib")
+          set(OPENSSL_ROOT_DIR "${CMAKE_MATCH_1}")
+          message(STATUS "Qt 的 TLS 插件用的 OpenSSL 在 ${OPENSSL_ROOT_DIR}，本程序也用它")
+        endif()
+      endif()
+    endif()
+
+    # 找不到插件（例如只装了 Qt 官方安装器的版本）时，退回 openssl@3
+    if(NOT OPENSSL_ROOT_DIR)
+      execute_process(COMMAND ${FWDS_BREW} --prefix openssl@3
                       OUTPUT_VARIABLE prefix OUTPUT_STRIP_TRAILING_WHITESPACE
                       RESULT_VARIABLE result ERROR_QUIET)
       if(result EQUAL 0 AND EXISTS "${prefix}")
-        if(formula STREQUAL "openssl@3" AND NOT OPENSSL_ROOT_DIR)
-          set(OPENSSL_ROOT_DIR "${prefix}")
-        elseif(formula STREQUAL "qt")
-          list(APPEND CMAKE_PREFIX_PATH "${prefix}")
-        endif()
+        set(OPENSSL_ROOT_DIR "${prefix}")
       endif()
-    endforeach()
+    endif()
   endif()
 endif()
 

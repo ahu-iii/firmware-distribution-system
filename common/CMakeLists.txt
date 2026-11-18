@@ -1,9 +1,6 @@
+# 3.0 以上都接受（3.x、4.x）。要紧的是和 Qt 的 TLS 后端用同一版：macOS 上由顶层 CMakeLists.txt 自动对齐，
+# 程序启动时 TlsChannelSecurity::load 还会再检查一遍
 find_package(OpenSSL 3.0 REQUIRED)
-# “3.0 以上”也会接受 4.x，这里限定大版本必须是 3
-if(NOT OPENSSL_VERSION VERSION_LESS 4.0)
-  message(FATAL_ERROR "找到的 OpenSSL 是 ${OPENSSL_VERSION}（${OPENSSL_INCLUDE_DIR}），本项目需要 3.x。"
-                      "macOS 上 brew install openssl@3；其他平台用 -DOPENSSL_ROOT_DIR=<OpenSSL 3 目录> 指定")
-endif()
 
 add_library(fwds_common STATIC
   protocol.h
@@ -55,7 +52,7 @@ add_library(fwds_common STATIC
   security/tls_channel.cpp
 )
 target_include_directories(fwds_common PUBLIC ${CMAKE_SOURCE_DIR})
-# OpenSSL 3 的头文件目录排在最前面：Homebrew 的 Qt 会带上 /opt/homebrew/include，
-# 那里可能是另一版 OpenSSL（openssl@4）的头文件，不能让编译器先找到它们
+# 选中的 OpenSSL 的头文件目录排在最前面：Homebrew 的 Qt 会带上 /opt/homebrew/include，
+# 那里可能是被 brew link 进来的另一版 OpenSSL 的头文件，不能让编译器先找到它们
 target_include_directories(fwds_common BEFORE PUBLIC ${OPENSSL_INCLUDE_DIR})
 target_link_libraries(fwds_common PUBLIC Qt6::Core Qt6::Network OpenSSL::Crypto)

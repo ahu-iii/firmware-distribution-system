@@ -58,19 +58,22 @@ bool TlsChannelSecurity::load(const QByteArray& caPem, const QByteArray& crlPem,
                               QString* error) {
   // Qt 在 Windows 上还带 Schannel、在 macOS 上还带 Secure Transport 两个系统 TLS 后端，
   // 找不到 OpenSSL 运行库时会悄悄换成它们。它们不支持这里要求的“只开一个套件、只用 X25519”，
-  // 所以只认 OpenSSL 后端，而且必须是 3.x，否则不启动网络（不降级凑合）。
+  // 所以只认 OpenSSL 后端，而且版本不低于 3，否则不启动网络（不降级凑合）。
   const QString backend = QSslSocket::activeBackend();
   if (backend != QStringLiteral("openssl") || !QSslSocket::supportsSsl()) {
     *error = QStringLiteral("Qt 没有加载 OpenSSL 运行库（当前 TLS 后端：%1），无法建立 TLS")
                  .arg(backend.isEmpty() ? QStringLiteral("无") : backend);
     return false;
   }
-  // Qt 的 TLS 后端和本程序自己（证书校验、签名验签）必须用同一个大版本的 OpenSSL 3：
-  // 一个进程里混着两版 libcrypto 时，两边的对象不能互相传递
+  // Qt 的 TLS 后端和本程序自己（证书校验、签名验签）必须用同一个大版本的 OpenSSL：
+  // 一个进程里混着两版 libcrypto 时，两边的对象不能互相传递。
+  // 版本号格式是 0xMNN00PP0L，最高 4 位是大版本号
   const long qtSsl = QSslSocket::sslLibraryVersionNumber();
-  if (qtSsl < 0x30000000L || qtSsl >= 0x40000000L || !opensslRuntimeIs3()) {
-    *error = QStringLiteral("OpenSSL 版本不对：Qt 加载的是 %1，需要 Qt 和本程序都用 3.x")
-                 .arg(QSslSocket::sslLibraryVersionString());
+  const int qtMajor = static_cast<int>(qtSsl >> 28);
+  if (qtMajor < 3 || qtMajor != opensslRuntimeMajor()) {
+    *error = QStringLiteral("OpenSSL 版本不对：Qt 加载的是 %1，本程序用的是 %2.x，两者大版本须一致且不低于 3")
+                 .arg(QSslSocket::sslLibraryVersionString())
+                 .arg(opensslRuntimeMajor());
     return false;
   }
   if (!verifier_.loadCa(caPem, error) || !verifier_.loadCrl(crlPem, error)) return false;

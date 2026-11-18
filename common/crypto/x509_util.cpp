@@ -46,10 +46,11 @@ QByteArray certToDer(X509* cert) {
 }
 
 QString certCommonName(X509* cert) {
-  X509_NAME* subject = X509_get_subject_name(cert);
+  // 名称和字段只读取不修改，用 const 指针：OpenSSL 4 起这两个函数返回的就是只读指针
+  const X509_NAME* subject = X509_get_subject_name(cert);
   const int index = X509_NAME_get_index_by_NID(subject, NID_commonName, -1);
   if (index < 0) return QString();
-  ASN1_STRING* value = X509_NAME_ENTRY_get_data(X509_NAME_get_entry(subject, index));
+  const ASN1_STRING* value = X509_NAME_ENTRY_get_data(X509_NAME_get_entry(subject, index));
   unsigned char* utf8 = nullptr;
   const int size = ASN1_STRING_to_UTF8(&utf8, value);
   if (size < 0) return QString();
