@@ -28,11 +28,11 @@
 
 ## 构建与运行
 
-依赖：CMake 3.20+、支持 C++17 的编译器、Qt 6.4+（Core、Network、Sql、Widgets，SQLite 驱动，OpenSSL TLS 后端）、OpenSSL 3、GoogleTest（系统没有时构建脚本会在线拉取）。
+依赖：CMake 3.20+、支持 C++17 的编译器、Qt 6.4+（Core、Network、Sql、Widgets，SQLite 驱动，OpenSSL TLS 后端）、OpenSSL 3（macOS 上跟随 Homebrew 的 Qt，可能是 4，见下文）、GoogleTest（系统没有时构建脚本会在线拉取）。
 
 Linux、macOS、Windows 都能构建运行。打包（windeployqt、UPX、程序自签名）只做 Windows 版。
 
-> 验证情况：Linux 版在云端容器（Ubuntu 24.04、Qt 6.4.2、OpenSSL 3.0.13）里构建并跑通全部单元测试。macOS 版 2026-11-18 在真机上验证过：Homebrew 依赖、335 条单元测试全过，本机联调（服务端 + 一台设备）上线正常，一次正常升级成功（分区 a 的 2.0.0 升到 2.1.0，活动分区切到 b）。Windows 的步骤还没有在真机上跑过。
+> 验证情况：Linux 版在云端容器（Ubuntu 24.04、Qt 6.4.2、OpenSSL 3.0.13）里构建并跑通全部单元测试。macOS 版 2026-11-18 在真机上验证过：Homebrew 依赖、335 条单元测试全过，本机联调（服务端 + 一台设备）上线正常，一次正常升级成功（分区 a 的 2.0.0 升到 2.1.0，活动分区切到 b）。同日 Homebrew 的 Qt 升到 6.12（改链 OpenSSL 4.1）后，在本机按自动跟随 Qt 的 OpenSSL 重新构建，335 条单元测试全过。Windows 的步骤还没有在真机上跑过。
 
 ### Linux
 
@@ -56,7 +56,7 @@ macOS 13 及以上，Apple 芯片和 Intel 都可以。用 Homebrew 装依赖：
 
 ```sh
 xcode-select --install                                    # 编译器（Apple Clang），装过就跳过
-brew install cmake ninja qt openssl@3 googletest
+brew install cmake ninja qt googletest                   # qt 会自动带上它用的 OpenSSL
 ```
 
 构建和测试的命令与 Linux 相同：
@@ -69,9 +69,11 @@ ctest --preset dev
 
 说明：
 
-- `openssl@3` 是 keg-only（Homebrew 不把它链接进 `/opt/homebrew`，以免和系统的 LibreSSL 混淆），CMake 默认找不到。顶层 `CMakeLists.txt` 在 macOS 上会用 `brew --prefix` 自动找到 `qt` 和 `openssl@3`；不用 Homebrew 的，配置时自己加 `-DCMAKE_PREFIX_PATH=<Qt 目录> -DOPENSSL_ROOT_DIR=<OpenSSL 目录>`。
-- 只支持 OpenSSL 3。机器上还装着 `openssl@4`（或别的版本被 `brew link` 进了 `/opt/homebrew`）时，以前可能编进另一版的头文件、测试失败；现在 CMake 把 OpenSSL 3 的头文件目录排在最前面，找到的不是 3.x 会直接报错，程序运行时也检查 Qt 和本程序用的都是 3.x。仍有问题时执行 `brew unlink openssl@4 && brew link openssl@3`，删掉 `build/dev` 后重新配置。
-- 推荐用 Homebrew 的 Qt：它带 OpenSSL TLS 后端，链接的也是同一份 `openssl@3`。Qt 官方安装器的 macOS 版运行时可能找不到 OpenSSL，这时 Qt 会换成系统的 Secure Transport，程序检查到后端不是 OpenSSL 会报错并拒绝启动网络（见设计文档 10.2 节），不会降级运行。
+- 本程序必须和 Qt 的 TLS 后端用同一版 OpenSSL：一个进程里混着两版 libcrypto，TLS 相关的操作会崩溃。Homebrew 的 Qt 6.12 起链接的是 `openssl@4`，所以 macOS 上不写死 `openssl@3`：顶层 `CMakeLists.txt` 用 `otool -L` 看 Qt 的 TLS 插件（`libqopensslbackend.dylib`）链接的是哪一份 libcrypto，就用那一份，配置时会打印“Qt 的 TLS 插件用的 OpenSSL 在 …”。这和 `brew link` 了哪一版无关，不用改 Homebrew 的链接。找不到插件时退回 `openssl@3`。
+- 代码按 OpenSSL 3 的接口编写，OpenSSL 3 和 4 都能编译运行（Linux、Windows 仍用 3）。程序启动时检查 Qt 加载的和本程序用的 OpenSSL 大版本一致且不低于 3，不一致就报错并拒绝启动网络，不会运行到一半崩溃。
+- 不用 Homebrew 的，配置时自己加 `-DCMAKE_PREFIX_PATH=<Qt 目录> -DOPENSSL_ROOT_DIR=<OpenSSL 目录>`，OpenSSL 目录要和 Qt 用的是同一版。
+- 推荐用 Homebrew 的 Qt：它带 OpenSSL TLS 后端。Qt 官方安装器的 macOS 版运行时可能找不到 OpenSSL，这时 Qt 会换成系统的 Secure Transport，程序检查到后端不是 OpenSSL 会报错并拒绝启动网络（见设计文档 10.2 节），不会降级运行。
+- 换过 Qt 或 OpenSSL 版本后，删掉 `build/dev` 再重新配置，否则 CMake 会沿用缓存里旧的 OpenSSL 路径。
 - 程序是普通的命令行可执行文件，不是 `.app`，从终端启动即可，下面“本机联调”的命令原样可用（macOS 默认的 zsh 也支持 `read -s`）。界面窗口有时出现在终端后面，用 Cmd-Tab 切过去。
 - 开着系统防火墙时，服务端第一次监听可能弹出“是否允许接受传入网络连接”。本机联调只走 127.0.0.1，选哪个都不影响；两台机器联调要选允许。
 

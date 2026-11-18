@@ -2,6 +2,8 @@
 // 仓库里因此不需要存放任何测试私钥（检查项 1-3）。
 #pragma once
 
+#include <gtest/gtest.h>
+
 #include <QDateTime>
 #include <memory>
 
@@ -72,7 +74,11 @@ class TestPki {
       const Identity& id, const QString& expectedServerName = QStringLiteral("127.0.0.1")) {
     auto s = std::make_unique<fwds::TlsChannelSecurity>();
     QString error;
-    if (!s->load(caPem(), crl(), id.certPem, id.keyPkcs8, &error)) return nullptr;
+    if (!s->load(caPem(), crl(), id.certPem, id.keyPkcs8, &error)) {
+      // 把原因写进测试结果，否则调用方拿到空指针只会看到一个崩溃（例如 Qt 和本程序的 OpenSSL 版本不一致）
+      ADD_FAILURE() << "TlsChannelSecurity::load 失败：" << error.toStdString();
+      return nullptr;
+    }
     s->setExpectedServerName(expectedServerName);
     return s;
   }

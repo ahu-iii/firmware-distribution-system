@@ -26,15 +26,19 @@ bool setValidity(X509* cert, const QDateTime& notBefore, const QDateTime& notAft
 }
 
 // 持有者名称：CN=<commonName>, O=FWDS。
+// 先单独拼好一个名称再整体设进证书：OpenSSL 4 起 X509_get_subject_name 返回只读指针，
+// 不能再原地往证书里的名称加字段；这种写法 OpenSSL 3 和 4 都能用。
 bool setSubject(X509* cert, const QString& commonName) {
-  X509_NAME* name = X509_get_subject_name(cert);
+  const OsslPtr<X509_NAME> name(X509_NAME_new());
   const QByteArray cn = commonName.toUtf8();
-  return X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_UTF8,
+  return name &&
+         X509_NAME_add_entry_by_txt(name.get(), "CN", MBSTRING_UTF8,
                                     reinterpret_cast<const unsigned char*>(cn.constData()),
                                     static_cast<int>(cn.size()), -1, 0) == 1 &&
-         X509_NAME_add_entry_by_txt(name, "O", MBSTRING_ASC,
+         X509_NAME_add_entry_by_txt(name.get(), "O", MBSTRING_ASC,
                                     reinterpret_cast<const unsigned char*>(kOrganization), -1, -1,
-                                    0) == 1;
+                                    0) == 1 &&
+         X509_set_subject_name(cert, name.get()) == 1;  // 复制一份进证书
 }
 
 // 16 字节随机序列号。最高位清零保证是正数，最低位置 1 保证不为零。

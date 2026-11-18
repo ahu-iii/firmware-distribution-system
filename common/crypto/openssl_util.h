@@ -12,8 +12,8 @@
 
 namespace fwds {
 
-// 运行时实际加载的 libcrypto 是不是 3.x（编译时用的头文件由 openssl_util.cpp 里的 static_assert 保证）。
-bool opensslRuntimeIs3();
+// 运行时实际加载的 libcrypto 的大版本号，例如 3 或 4（编译时用的头文件由 openssl_util.cpp 里的 static_assert 保证不低于 3）。
+int opensslRuntimeMajor();
 
 // 每种 OpenSSL 对象对应自己的释放函数。
 struct OsslDeleter {
@@ -27,6 +27,7 @@ struct OsslDeleter {
   void operator()(X509_STORE* p) const { X509_STORE_free(p); }
   void operator()(X509_STORE_CTX* p) const { X509_STORE_CTX_free(p); }
   void operator()(X509_EXTENSION* p) const { X509_EXTENSION_free(p); }
+  void operator()(X509_NAME* p) const { X509_NAME_free(p); }
   void operator()(PKCS8_PRIV_KEY_INFO* p) const { PKCS8_PRIV_KEY_INFO_free(p); }
   // ASN1_INTEGER、ASN1_TIME 在 OpenSSL 里是同一个结构体的别名，共用这一个释放函数
   void operator()(ASN1_STRING* p) const { ASN1_STRING_free(p); }
