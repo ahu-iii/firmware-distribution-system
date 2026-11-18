@@ -1,0 +1,16 @@
+# A2 / ST-06：紧急停止时 UPDATE_CANCEL 在抓包中的位置（A2_ST-06_灰度与紧急停止.pcapng）
+抓包：tshark -i lo0 -f "tcp port 19543"；DEV-001 经 tests/attack_tools/tls_proxy.py slow 2000000（19544 → 19543）限速，停在下载阶段。
+解析：tshark -d tcp.port==19543,tls（非标准端口，手动指定按 TLS 解析）。
+TLS 流 3 = DEV-001（经代理）。全部业务数据都是 TLS 1.3 应用数据记录（content type 23），只能看到长度，看不到内容。
+
+| 帧号 | 时间（UTC） | 方向 | 记录长度 | 对应服务端 / 设备日志 |
+|---|---|---|---|---|
+| 3944 | 17:29:51.571 | 设备→服务端 | 110 | 设备日志 17:29:51.571 CHUNK_REQ from_index 592 count 16 |
+| 3946 ~ 4034 | 17:29:51.572 起 | 服务端→设备 | 16401（成批） | 第 592 ~ 607 片分片数据（每片一条 16 KB 记录 ×4 + 57 字节尾记录） |
+| 4035 | 17:29:51.627 | 服务端→设备 | 145 | 服务端日志 17:29:51.612 update cancelled for DEV-001 reason: emergency_stop（UPDATE_CANCEL） |
+| 4039 | 17:29:52.233 | 设备→服务端 | 110 | 设备在收到取消前已发出的下一个 CHUNK_REQ（from_index 608；限速代理里排队的分片让取消晚到约 0.6 秒） |
+| 4041 | 17:29:52.233 | 设备→服务端 | 271 | 设备日志 17:29:52.226 update result: FAILED 3012（结果事件） |
+| 4043 | 17:29:52.237 | 服务端→设备 | 72 | 服务端日志 17:29:52.234 “requested a chunk of the package just cancelled, ignored”，回 ERROR 3009 |
+
+在 Wireshark 里用过滤器 `frame contains "UPDATE_CANCEL" || frame contains "emergency_stop" || ...` 搜索，两份抓包都显示 0 个分组（见截图），
+`tests/attack_tools/pcap_grep.py` 的字节级搜索也是 0 次（见 A2_ST-06_明文搜索结果.txt）。

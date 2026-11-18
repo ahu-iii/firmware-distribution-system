@@ -1,0 +1,14 @@
+# A4 / ST-15：gitleaks 扫描（2026-11-18T17:53:42Z，gitleaks 8.30.1）
+
+## 1. 仓库全部分支、全部历史
+命令：gitleaks detect --source . --log-opts="--all" -r gitleaks报告.json
+INF 36 commits scanned.
+INF scanned ~5270004 bytes (5.27 MB) in 153ms
+INF no leaks found
+退出码 0，报告 JSON：[]
+
+## 2. 本证据包目录（含抓包、截图）
+命令：gitleaks dir evidence/mac-20261118
+INF scanned ~44541335 bytes (44.54 MB) in 6.47s
+INF no leaks found
+报告 JSON：[]
