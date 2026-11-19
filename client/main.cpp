@@ -25,6 +25,7 @@
 #include "common/build_info.h"
 #include "common/config.h"
 #include "common/log.h"
+#include "common/ui/cjk_font.h"
 #include "common/shutdown_signal.h"
 #include "common/security/exe_signature.h"
 #include "common/security/license.h"
@@ -238,6 +239,9 @@ int main(int argc, char* argv[]) {
 
   std::unique_ptr<fwds::MainWindow> window;
   if (!headless) {
+    // Linux 上没装中文字体时界面会显示方框：先检查，缺字体就在日志里写明要装哪个包
+    QString fontHint;
+    if (!fwds::ensureCjkFont(&fontHint)) qCWarning(fwds::lcApp).noquote() << fontHint;
     window = std::make_unique<fwds::MainWindow>(config, &client, &updater, &outbox);
     window->show();
   }

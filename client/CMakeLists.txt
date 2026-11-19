@@ -38,5 +38,8 @@ add_executable(fwds-client
   ui/main_window.cpp
   ui/demo_panel.h
   ui/demo_panel.cpp
+  # 界面中文字体检查，服务端和客户端共用
+  ${CMAKE_SOURCE_DIR}/common/ui/cjk_font.h
+  ${CMAKE_SOURCE_DIR}/common/ui/cjk_font.cpp
 )
 target_link_libraries(fwds-client PRIVATE fwds_client_lib Qt6::Widgets)
