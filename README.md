@@ -20,7 +20,7 @@
 
 | 目录 | 内容 | 现状 |
 |---|---|---|
-| `common/` | 协议常量、FrameCodec、配置加载、日志、网络层公共部分（FrameChannel、重连退避、信道安全接口）；固件 manifest、.fwpkg 容器和模拟固件镜像头；升级消息体编解码（UPDATE_NOTIFY、CHUNK_REQ、CHUNK_DATA）；`crypto/`（SecureBuffer、AES-256-GCM、PBKDF2、私钥文件封装、X.509 读取、SHA-256、RSA-3072-PSS 签名验签）；`security/`（TLS 配置、证书完整校验、私钥口令注入、ManifestVerifier：manifest 验签、分片哈希、整镜像校验；固件签名公钥指纹核对，两端共用） | 已实现 |
+| `common/` | 协议常量、FrameCodec、配置加载、日志、网络层公共部分（FrameChannel、重连退避、信道安全接口）；固件 manifest、.fwpkg 容器和模拟固件镜像头；升级消息体编解码（UPDATE_NOTIFY、CHUNK_REQ、CHUNK_DATA）；`crypto/`（SecureBuffer、AES-256-GCM、PBKDF2、私钥文件封装、X.509 读取、SHA-256、RSA-3072-PSS 签名验签）；`security/`（TLS 配置、证书完整校验、私钥口令注入、ManifestVerifier：manifest 验签、分片哈希、整镜像校验；固件签名公钥指纹核对，两端共用）；`ui/cjk_font`（界面中文字体检查，服务端和客户端共用） | 已实现 |
 | `server/` | 分发服务端 `fwds-server`：`net/`（TcpServer、Session、ConnLimiter）、`storage/`（SQLite）、`security/`（OperatorAuth：账号口令与角色权限）、`business/`（DeviceRegistry、LoginHandler、LoginThrottle、HeartbeatMonitor、AdminService、DispatchGate、FirmwareRepo、RolloutManager、ChunkService）、`ui/`（登录、设备监控、固件库、账号管理） | 网络层、TLS、设备注册表与指纹比对、登录失败锁定、账号与角色、“允许下发”开关、设备监控界面、固件库（导入时和启动时整包检查、固件表入库、导入界面）、单台下发（开关、型号、互锁裁决，发布表留痕）、分片服务（下发通知、按请求发分片、重连后重发通知）、按分组灰度与紧急停止、设备事件入库与对账、审计哈希链、运行日志文件与“运行日志”检索页、设备侧审计类别（登录、断线、心跳超时、升级、告警）、登录时的许可证验签、启动时的程序自校验和 `--check` 部署自检已实现 |
 | `client/` | 设备客户端 `fwds-client`：`net/`（TcpClient：登录、心跳、断线重连）、`security/`（UpdateValidator：下载前验签、型号、防降级三项检查；DeviceAntiRollback）、`business/`（Updater：升级状态机；Downloader：分片下载；Bootloader：启动验签、自检、回滚；Provisioner：出厂写入）、`storage/`（ResumeStore、ChunkBitmap：断点落盘；BootConfig、SlotStore：boot.json 和 A/B 分区）、`ui/` | 网络层、TLS、下载前检查、防降级、分片下载与断点续传、整包校验、A/B 分区写入、模拟重启与自动回滚已实现并接入主程序；界面显示当前固件、分区、升级状态和进度；事件 outbox（PROGRESS / RESULT / ALERT 先落盘再上报，断网恢复后按序号补传）、启动时的许可证检查（签名、设备 ID、硬件指纹、有效期）和程序自校验、演示面板（模拟断网、写入时断电、立即断电、篡改下载缓存）、运行日志写文件已实现 |
 | `signer/` | 离线签发工具 `fwds-signer` | 证书子命令（`ca-init`、`issue-cert`、`revoke`、`update-crl`、`list-certs`）、固件子命令（`fsk-init`、`make-image`、`sign-fw`、`verify-fw`）、程序签名 `sign-exe`、许可证 `issue-lic` 已实现 |
@@ -43,6 +43,15 @@ Ubuntu 24.04 上：
 ```sh
 sudo apt install cmake ninja-build g++ qt6-base-dev libqt6sql6-sqlite libssl-dev libgtest-dev
 ```
+
+界面文字是中文，Linux 上还要装中文字体，否则服务端和客户端窗口里的中文都显示成方框（macOS、Windows 自带中文字体，不用装）：
+
+```sh
+sudo apt install fonts-noto-cjk          # Fedora：sudo dnf install google-noto-sans-cjk-fonts
+fc-list :lang=zh family                  # 有输出就说明装好了
+```
+
+程序启动界面前会检查（`common/ui/cjk_font.cpp`）：找到中文字体就把它排进界面字体的候选列表；一个都没有就在运行日志里写一条 WARN，写明要装的包。`demo/start.sh` 在 Linux 上也会先检查，没有中文字体直接停下并提示安装命令。
 
 构建并运行单元测试：
 
@@ -121,7 +130,7 @@ ctest --preset dev
 
 ### 答辩演示（一键脚本，推荐）
 
-现场演示不要从零手动建证书、建账号、注册设备：步骤多，任何一步输错都会卡住。`demo/` 下的脚本把这些准备一次做完，并且随时能在几秒内回到演示前的状态。适用于 macOS 和 Linux（Windows 没有对应脚本，按下面“本机联调”手动操作）。演示流程、讲稿和出错时怎么办见[演示脚本](docs/演示脚本.md)。
+现场演示不要从零手动建证书、建账号、注册设备：步骤多，任何一步输错都会卡住。`demo/` 下的脚本把这些准备一次做完，并且随时能在几秒内回到演示前的状态。适用于 macOS 和 Linux（Windows 没有对应脚本，按下面“本机联调”手动操作）。Linux 上要先装中文字体（`sudo apt install fonts-noto-cjk`，见上文“Linux”），否则窗口里的中文是方框。演示流程、讲稿和出错时怎么办见[演示脚本](docs/演示脚本.md)。
 
 前一天晚上，在演示用的电脑上（许可证绑定本机硬件指纹，换电脑要重新准备）：
 

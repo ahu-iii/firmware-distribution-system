@@ -9,6 +9,10 @@ source "$(dirname "$0")/lib.sh"
 need_bins
 [ -f "$D/conf/server.ini" ] || die "还没有准备演示环境，先运行 demo/setup.sh"
 command -v python3 >/dev/null || die "没有 python3（慢速链路代理要用）。macOS 上运行 xcode-select --install"
+# Linux 上没装中文字体时窗口里的中文全是方框（macOS 自带中文字体，不用检查）
+if [ "$(uname -s)" = Linux ] && command -v fc-list >/dev/null && [ -z "$(fc-list :lang=zh family)" ]; then
+  die "没有中文字体，窗口里的文字会显示成方框。先安装：sudo apt install fonts-noto-cjk（Fedora：sudo dnf install google-noto-sans-cjk-fonts）"
+fi
 
 # 后台启动一个进程，记下进程号。$1 是名字，其余是命令
 launch() {

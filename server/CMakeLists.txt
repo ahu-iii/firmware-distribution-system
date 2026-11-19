@@ -62,5 +62,8 @@ add_executable(fwds-server
   ui/event_dialog.cpp
   ui/log_page.h
   ui/log_page.cpp
+  # 界面中文字体检查，服务端和客户端共用
+  ${CMAKE_SOURCE_DIR}/common/ui/cjk_font.h
+  ${CMAKE_SOURCE_DIR}/common/ui/cjk_font.cpp
 )
 target_link_libraries(fwds-server PRIVATE fwds_server_lib Qt6::Widgets)
